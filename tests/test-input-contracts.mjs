@@ -77,7 +77,7 @@ const gql = {
   },
 };
 const registry = new ToolRegistry();
-registerBlobTools(registry, gql);
+registerBlobTools(registry, gql, "http://127.0.0.1:1");
 registerCommentTools(registry, gql, {});
 registerDocTools(registry, gql, {});
 registerHistoryTools(registry, gql, {});

@@ -139,7 +139,7 @@ const gql = {
     throw new Error("Unexpected GraphQL request in output-schema test");
   },
 };
-registerBlobTools(server, gql);
+registerBlobTools(server, gql, "http://127.0.0.1:1");
 
 const client = await connectInMemory(server, "output-schema-test");
 

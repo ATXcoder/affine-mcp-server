@@ -58,6 +58,7 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `list_docs` | List documents with pagination | Includes `node.tags` |
 | `list_tags` | List all tags in a workspace | |
 | `search_docs` | Search titles with substring, prefix, or exact matching | Supports tag filter and updatedAt sorting; limit is 1-200 |
+| `search_doc_content` | Full-text search across document content via AFFiNE's server-side keyword search | Returns a highlight snippet and blockId per match when available; complements `search_docs`, which only matches titles |
 | `find_doc_by_title` | Find documents whose title exactly matches a supplied title | Supports optional case-insensitive matching and a result limit |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
@@ -209,5 +210,6 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `upload_blob` | Upload a file or blob to workspace storage | Defaults to `encoding: "utf8"`; pass `encoding: "base64"` explicitly for binary content. The returned opaque key is accepted as image/attachment `sourceId`; it is not an external URL |
+| `get_blob` | Download a blob (e.g. an image referenced by a doc) and return its bytes | Image content types return as inline MCP image content; everything else returns as an embedded binary resource. Capped at `AFFINE_BLOB_DOWNLOAD_MAX_BYTES` (default 10MB) |
 | `delete_blob` | Delete a blob from workspace storage | Permanent deletion requires `confirmKey` to exactly match `key`; false, exception, and unconfirmed outcomes return stable MCP errors |
 | `cleanup_blobs` | Permanently remove deleted blobs | `confirmWorkspaceId` must exactly match `workspaceId`; false, exception, and unconfirmed outcomes return stable MCP errors |

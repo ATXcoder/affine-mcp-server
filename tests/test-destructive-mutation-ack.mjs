@@ -388,7 +388,7 @@ async function testBlobReceipts() {
       throw new Error("Unexpected blob mutation");
     },
   };
-  registerBlobTools(registry, gql);
+  registerBlobTools(registry, gql, "https://example.test");
   const deleteBlob = registry.tools.get("delete_blob");
   const cleanupBlobs = registry.tools.get("cleanup_blobs");
   assert.equal(typeof deleteBlob, "function");

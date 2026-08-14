@@ -195,7 +195,7 @@ async function testToolContract() {
         throw new Error("Unexpected GraphQL request in blob contract test.");
       },
     };
-    registerBlobTools(registry, gql, {
+    registerBlobTools(registry, gql, uploadServer.baseUrl, {
       maxDecodedBytes: 16,
       timeoutMs: 100,
       maxResponseBytes: 128,

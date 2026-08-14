@@ -75,7 +75,7 @@ const falseResultClient = {
   },
 };
 const registry = new ToolRegistry();
-registerBlobTools(registry, falseResultClient);
+registerBlobTools(registry, falseResultClient, "http://127.0.0.1:1");
 registerCommentTools(registry, falseResultClient, {});
 registerNotificationTools(registry, falseResultClient);
 registerUserCRUDTools(registry, falseResultClient);

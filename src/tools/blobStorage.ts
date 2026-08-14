@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
-import { receipt, text, toolError } from "../util/mcp.js";
+import { blob, receipt, text, toolError } from "../util/mcp.js";
 import FormData from "form-data";
 import fetch, { type Response } from "node-fetch";
 import { requireMatchingConfirmation } from "../util/inputSchemas.js";
@@ -14,9 +14,16 @@ export type BlobUploadConfig = {
   maxResponseBytes: number;
 };
 
+export type BlobDownloadConfig = {
+  maxResponseBytes: number;
+  timeoutMs: number;
+};
+
 const DEFAULT_MAX_DECODED_BYTES = 25 * 1024 * 1024;
 const DEFAULT_UPLOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
+const DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024;
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 30_000;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const MULTIPART_MANAGED_HEADERS = new Set([
   "content-length",
@@ -38,6 +45,13 @@ class BlobUploadTimeoutError extends Error {
   constructor(timeoutMs: number) {
     super(`Blob upload timed out after ${timeoutMs}ms.`);
     this.name = "BlobUploadTimeoutError";
+  }
+}
+
+class BlobDownloadTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Blob download timed out after ${timeoutMs}ms.`);
+    this.name = "BlobDownloadTimeoutError";
   }
 }
 
@@ -81,6 +95,22 @@ export function loadBlobUploadConfig(env: NodeJS.ProcessEnv = process.env): Blob
       "AFFINE_BLOB_UPLOAD_RESPONSE_MAX_BYTES",
       env.AFFINE_BLOB_UPLOAD_RESPONSE_MAX_BYTES,
       DEFAULT_MAX_RESPONSE_BYTES,
+    ),
+  };
+}
+
+export function loadBlobDownloadConfig(env: NodeJS.ProcessEnv = process.env): BlobDownloadConfig {
+  return {
+    maxResponseBytes: parsePositiveInteger(
+      "AFFINE_BLOB_DOWNLOAD_MAX_BYTES",
+      env.AFFINE_BLOB_DOWNLOAD_MAX_BYTES,
+      DEFAULT_MAX_DOWNLOAD_BYTES,
+    ),
+    timeoutMs: parsePositiveInteger(
+      "AFFINE_BLOB_DOWNLOAD_TIMEOUT_MS",
+      env.AFFINE_BLOB_DOWNLOAD_TIMEOUT_MS,
+      DEFAULT_DOWNLOAD_TIMEOUT_MS,
+      MAX_TIMER_DELAY_MS,
     ),
   };
 }
@@ -164,6 +194,38 @@ async function readLimitedResponseBody(response: Response, maxResponseBytes: num
   return Buffer.concat(chunks).toString("utf8");
 }
 
+async function readLimitedBinaryResponseBody(response: Response, maxResponseBytes: number): Promise<Buffer> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const declaredLength = Number(contentLength);
+    if (Number.isFinite(declaredLength) && declaredLength > maxResponseBytes) {
+      cancelResponseBody(response);
+      throw new Error(
+        `Blob is ${declaredLength} bytes; the configured download limit is ${maxResponseBytes} bytes.`,
+      );
+    }
+  }
+
+  if (!response.body) {
+    return Buffer.alloc(0);
+  }
+
+  const chunks: Buffer[] = [];
+  let receivedBytes = 0;
+  for await (const chunk of response.body) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    receivedBytes += buffer.length;
+    if (receivedBytes > maxResponseBytes) {
+      cancelResponseBody(response);
+      throw new Error(
+        `Blob download exceeded the configured limit of ${maxResponseBytes} bytes.`,
+      );
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 function parseUploadResponse(body: string): BlobUploadGraphQLResponse {
   if (!body) {
     throw new Error("Blob upload returned an empty response.");
@@ -213,7 +275,9 @@ function buildMultipartHeaders(
 export function registerBlobTools(
   server: McpServer,
   gql: GraphQLClient,
+  baseUrl: string,
   uploadConfig: BlobUploadConfig = loadBlobUploadConfig(),
+  downloadConfig: BlobDownloadConfig = loadBlobDownloadConfig(),
 ) {
   // UPLOAD BLOB/FILE
   const uploadBlobHandler = async ({
@@ -330,6 +394,80 @@ export function registerBlobTools(
       }
     },
     uploadBlobHandler as any
+  );
+
+  // GET BLOB
+  const getBlobHandler = async ({ workspaceId, key }: { workspaceId: string; key: string }) => {
+    try {
+      const { headers } = await gql.getConnectionAuth();
+      const url = `${baseUrl}/api/workspaces/${encodeURIComponent(workspaceId)}/blobs/${encodeURIComponent(key)}`;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), downloadConfig.timeoutMs);
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          headers,
+          signal: controller.signal,
+        });
+
+        if (response.status === 404) {
+          throw new Error(`Blob "${key}" was not found in workspace "${workspaceId}".`);
+        }
+        if (!response.ok) {
+          throw new Error(`Blob download failed with HTTP ${response.status}.`);
+        }
+
+        const contentType = response.headers.get("content-type") || "application/octet-stream";
+        const buffer = await readLimitedBinaryResponseBody(response, downloadConfig.maxResponseBytes);
+        const data = buffer.toString("base64");
+
+        return blob({
+          data,
+          mimeType: contentType,
+          uri: url,
+          meta: {
+            key,
+            workspaceId,
+            contentType,
+            size: buffer.length,
+            encoding: "base64",
+          },
+        });
+      } catch (error: any) {
+        if (controller.signal.aborted) {
+          throw new BlobDownloadTimeoutError(downloadConfig.timeoutMs);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (error: any) {
+      return toolError(error, {
+        code: error instanceof BlobDownloadTimeoutError
+          ? "blob_download_timeout"
+          : "blob_download_failed",
+        retryable: false,
+        data: {
+          kind: "blob.get",
+          status: "failed",
+          workspaceId,
+          key,
+        },
+      });
+    }
+  };
+  server.registerTool(
+    "get_blob",
+    {
+      title: "Get Blob",
+      description: "Download a blob from AFFiNE workspace storage (for example, an image referenced by a document's image block sourceId) and return its bytes. Image content types are returned as inline image content; everything else is returned as an embedded binary resource. Subject to a configurable size limit (default 10MB, see AFFINE_BLOB_DOWNLOAD_MAX_BYTES).",
+      inputSchema: {
+        workspaceId: z.string().describe("AFFiNE workspace id that owns the blob."),
+        key: z.string().describe("Blob key, e.g. a doc's image block sourceId or the key returned by upload_blob."),
+      },
+    },
+    getBlobHandler as any
   );
 
   // DELETE BLOB

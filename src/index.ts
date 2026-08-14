@@ -208,7 +208,7 @@ async function buildServer() {
   if (config.authMode !== "oauth") {
     registerAuthTools(server, gql, config.baseUrl);
   }
-  registerBlobTools(server, gql);
+  registerBlobTools(server, gql, config.baseUrl);
   registerNotificationTools(server, gql);
   return server;
 }

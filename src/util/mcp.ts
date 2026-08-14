@@ -64,6 +64,31 @@ export function toolError(error: unknown, options: ToolErrorOptions = {}) {
   };
 }
 
+/**
+ * Return binary content as MCP `image` content when the MIME type is an
+ * image (renders inline in most clients), or as an embedded `resource`
+ * (base64 `blob`) otherwise. `meta` is metadata-only — the byte payload
+ * itself lives in the content block, not structuredContent.
+ */
+export function blob(params: {
+  data: string;
+  mimeType: string;
+  uri: string;
+  meta: Record<string, unknown>;
+}) {
+  const isImage = /^image\//i.test(params.mimeType);
+  const content = isImage
+    ? [{ type: "image" as const, data: params.data, mimeType: params.mimeType }]
+    : [{
+      type: "resource" as const,
+      resource: { uri: params.uri, mimeType: params.mimeType, blob: params.data },
+    }];
+  return {
+    content,
+    structuredContent: cloneJsonValue(params.meta),
+  };
+}
+
 export function receipt(kind: string, data: Record<string, unknown>) {
   const ok = typeof data.ok === "boolean"
     ? data.ok

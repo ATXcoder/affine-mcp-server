@@ -63,6 +63,8 @@ cookie, while setting a bearer credential removes any cookie header.
 | `AFFINE_BLOB_UPLOAD_MAX_BYTES` | No | `26214400` (25 MiB) | Maximum decoded payload size accepted by `upload_blob` |
 | `AFFINE_BLOB_UPLOAD_TIMEOUT_MS` | No | `30000` | Maximum time allowed for the multipart upload request |
 | `AFFINE_BLOB_UPLOAD_RESPONSE_MAX_BYTES` | No | `1048576` (1 MiB) | Maximum AFFiNE response body size read after an upload |
+| `AFFINE_BLOB_DOWNLOAD_MAX_BYTES` | No | `10485760` (10 MiB) | Maximum blob size `get_blob` will read before failing |
+| `AFFINE_BLOB_DOWNLOAD_TIMEOUT_MS` | No | `30000` | Maximum time allowed for the blob download request |
 
 `upload_blob` treats content as UTF-8 by default and preserves it exactly, including leading and trailing whitespace. Binary callers must pass `encoding: "base64"`; Base64 input is validated for canonical padding before it is decoded. ASCII whitespace inside explicit Base64 input is ignored.
 

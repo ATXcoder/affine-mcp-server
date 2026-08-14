@@ -4703,6 +4703,75 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     searchDocsHandler as any
   );
 
+  // search_doc_content: full-text search over document content via AFFiNE's
+  // server-side GraphQL searchDocs query. Complements search_docs, which only
+  // matches titles from workspace metadata.
+  const searchDocContentHandler = async (parsed: {
+    workspaceId?: string;
+    keyword: string;
+    limit?: number;
+  }) => {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) throw new Error("workspaceId is required.");
+    const keyword = (parsed.keyword ?? "").trim();
+    if (!keyword) throw new Error("keyword is required.");
+    const limit = parsed.limit ?? 20;
+
+    const query = `query SearchDocContent($workspaceId: String!, $keyword: String!, $limit: Int) {
+      workspace(id: $workspaceId) {
+        searchDocs(input: { keyword: $keyword, limit: $limit }) {
+          docId
+          title
+          blockId
+          highlight
+        }
+      }
+    }`;
+    const data = await gql.request<{
+      workspace: {
+        searchDocs: Array<{
+          docId: string;
+          title: string | null;
+          blockId: string | null;
+          highlight: string | null;
+        }>;
+      };
+    }>(query, { workspaceId, keyword, limit });
+
+    const matches = data.workspace?.searchDocs ?? [];
+    const baseUrl = (process.env.AFFINE_BASE_URL || gql.endpoint.replace(/\/graphql\/?$/, '')).replace(/\/$/, '');
+    const results = matches.map((match) => ({
+      docId: match.docId,
+      title: match.title,
+      highlight: match.highlight,
+      blockId: match.blockId,
+      url: match.blockId
+        ? `${baseUrl}/workspace/${workspaceId}/${match.docId}#${match.blockId}`
+        : `${baseUrl}/workspace/${workspaceId}/${match.docId}`,
+    }));
+
+    return text({
+      keyword,
+      workspaceId,
+      totalCount: results.length,
+      results,
+    });
+  };
+
+  server.registerTool(
+    "search_doc_content",
+    {
+      title: "Search Document Content",
+      description: "Full-text search across document content (not just titles) using AFFiNE's server-side keyword search. Returns docId, title, a matching content snippet (highlight), and the matching block id when available. Complements search_docs, which only matches titles.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        keyword: z.string().min(1).describe("Keyword or phrase to search for within document content."),
+        limit: BoundedSearchLimit.optional().describe("Max results to return (default: 20, maximum: 200)."),
+      },
+    },
+    searchDocContentHandler as any
+  );
+
   const findDocByTitleHandler = async (parsed: {
     workspaceId?: string;
     title: string;
