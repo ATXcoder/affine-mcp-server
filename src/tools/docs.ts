@@ -3844,6 +3844,158 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     }
   }
 
+  const JOURNAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  function todayJournalDate(): string {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  /**
+   * Find AFFiNE's existing Journal entry for a date, or create one.
+   * Mirrors AFFiNE's own JournalService.ensureJournalByDate: a journal doc is
+   * a regular doc whose workspace pageMeta entry has `journal` set to the
+   * target date (YYYY-MM-DD), title conventionally matching. Lookup and the
+   * fallback create both operate on the workspace root's Y.Doc directly, the
+   * same CRDT-editing approach add_tag_to_doc/create_doc already use.
+   */
+  async function getOrCreateJournalDocInternal(parsed: { workspaceId?: string; date?: string }) {
+    const workspaceId = parsed.workspaceId || defaults.workspaceId;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
+    }
+    const date = parsed.date?.trim() || todayJournalDate();
+    if (!JOURNAL_DATE_RE.test(date)) {
+      throw new Error(`date must be in YYYY-MM-DD format, got "${date}".`);
+    }
+
+    const { endpoint, cookie, bearer } = await getCookieAndEndpoint();
+    const wsUrl = wsUrlFromGraphQLEndpoint(endpoint);
+    const socket = await connectWorkspaceSocket(wsUrl, cookie, bearer);
+    try {
+      await joinWorkspace(socket, workspaceId);
+
+      const wsDoc = new Y.Doc();
+      const wsSnapshot = await loadDoc(socket, workspaceId, workspaceId);
+      if (wsSnapshot.missing) {
+        Y.applyUpdate(wsDoc, Buffer.from(wsSnapshot.missing, "base64"));
+      }
+      const wsPrevSV = Y.encodeStateVector(wsDoc);
+      const wsMeta = wsDoc.getMap("meta");
+      let pages = wsMeta.get("pages") as Y.Array<Y.Map<any>> | undefined;
+      if (!(pages instanceof Y.Array)) {
+        pages = new Y.Array();
+        wsMeta.set("pages", pages);
+      }
+
+      for (const value of pages.toArray()) {
+        if (!(value instanceof Y.Map)) continue;
+        if (value.get("trash") === true) continue;
+        if (value.get("journal") === date) {
+          const id = value.get("id");
+          if (typeof id === "string" && id.length > 0) {
+            const title = value.get("title");
+            return {
+              workspaceId,
+              date,
+              docId: id,
+              title: typeof title === "string" ? title : date,
+              created: false,
+            };
+          }
+        }
+      }
+
+      // No existing journal entry for this date — create one, mirroring
+      // createDocInternal's block layout, titled with the date itself
+      // (matching AFFiNE's own JournalService convention) and with the
+      // `journal` field set on both the doc's own meta and the workspace
+      // pageMeta entry.
+      const docId = generateId();
+      const title = date;
+      const ydoc = new Y.Doc();
+      const blocks = ydoc.getMap("blocks");
+      const pageId = generateId();
+      const page = new Y.Map();
+      setSysFields(page, pageId, "affine:page");
+      const titleText = new Y.Text();
+      titleText.insert(0, title);
+      page.set("prop:title", titleText);
+      const children = new Y.Array();
+      page.set("sys:children", children);
+      blocks.set(pageId, page);
+
+      const surfaceId = generateId();
+      const surface = new Y.Map();
+      setSysFields(surface, surfaceId, "affine:surface");
+      surface.set("sys:parent", null);
+      surface.set("sys:children", new Y.Array());
+      const elements = new Y.Map<any>();
+      elements.set("type", "$blocksuite:internal:native$");
+      elements.set("value", new Y.Map<any>());
+      surface.set("prop:elements", elements);
+      blocks.set(surfaceId, surface);
+      children.push([surfaceId]);
+
+      const noteId = generateId();
+      const note = new Y.Map();
+      setSysFields(note, noteId, "affine:note");
+      note.set("sys:parent", null);
+      note.set("prop:displayMode", "both");
+      note.set("prop:xywh", DEFAULT_NOTE_XYWH);
+      note.set("prop:index", "a0");
+      note.set("prop:hidden", false);
+      note.set("prop:background", buildDefaultNoteBackground());
+      const noteChildren = new Y.Array();
+      note.set("sys:children", noteChildren);
+      blocks.set(noteId, note);
+      children.push([noteId]);
+
+      const paraId = generateId();
+      const para = new Y.Map();
+      setSysFields(para, paraId, "affine:paragraph");
+      para.set("sys:parent", null);
+      para.set("sys:children", new Y.Array());
+      para.set("prop:type", "text");
+      para.set("prop:text", new Y.Text());
+      blocks.set(paraId, para);
+      noteChildren.push([paraId]);
+
+      const meta = ydoc.getMap("meta");
+      meta.set("id", docId);
+      meta.set("title", title);
+      meta.set("createDate", Date.now());
+      meta.set("tags", new Y.Array());
+      meta.set("journal", date);
+
+      const updateFull = Y.encodeStateAsUpdate(ydoc);
+      await pushDocUpdate(socket, workspaceId, docId, Buffer.from(updateFull).toString("base64"));
+
+      const entry = new Y.Map();
+      entry.set("id", docId);
+      entry.set("title", title);
+      entry.set("createDate", Date.now());
+      entry.set("tags", new Y.Array());
+      entry.set("journal", date);
+      pages.push([entry as any]);
+      const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
+      await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
+
+      return {
+        workspaceId,
+        date,
+        docId,
+        title,
+        created: true,
+      };
+    } finally {
+      socket.disconnect();
+    }
+  }
+
   async function assertParentDocumentExistsBeforeCreate(
     workspaceId: string,
     parentDocId: string | undefined,
@@ -5889,6 +6041,24 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       },
     },
     createDocHandler as any
+  );
+
+  // GET OR CREATE JOURNAL DOC
+  const getOrCreateJournalDocHandler = async (parsed: { workspaceId?: string; date?: string }) => {
+    const result = await getOrCreateJournalDocInternal(parsed);
+    return receipt("doc.get_or_create_journal", result);
+  };
+  server.registerTool(
+    "get_or_create_journal_doc",
+    {
+      title: "Get Or Create Journal Doc",
+      description: "Find AFFiNE's existing Journal (daily-note) entry for a given date, or create one if none exists yet. Defaults to today. Returns the doc's id, title, and whether it was just created — read/append to it like any other doc afterward, e.g. with append_markdown.",
+      inputSchema: {
+        workspaceId: WorkspaceId.optional(),
+        date: z.string().regex(JOURNAL_DATE_RE, "Date must be in YYYY-MM-DD format.").optional().describe("Date to look up or create a journal entry for, in YYYY-MM-DD format. Defaults to today."),
+      },
+    },
+    getOrCreateJournalDocHandler as any
   );
 
   const semanticSectionSchema = z.object({

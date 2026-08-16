@@ -47,6 +47,7 @@
     "get_doc_icon",
     "get_edgeless_canvas",
     "get_folder_icon",
+    "get_or_create_journal_doc",
     "get_orphan_docs",
     "get_workspace",
     "inspect_template_structure",

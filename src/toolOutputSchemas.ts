@@ -85,6 +85,7 @@ const OUTPUT_SPECS = {
   get_doc_icon: receipt({ workspaceId: "string", docId: "string", icon: "icon", hasIcon: "boolean" }),
   get_edgeless_canvas: spec({ docId: "string", exists: "boolean", surfaceBlockId: "nullableString", edgelessBlocks: "unknownArray", surfaceElements: "unknownArray", bounds: "nullableObject", elementCounts: "object" }),
   get_folder_icon: receipt({ workspaceId: "string", folderId: "string", icon: "icon", hasIcon: "boolean" }),
+  get_or_create_journal_doc: receipt({ workspaceId: "string", date: "string", docId: "string", title: "string", created: "boolean" }),
   get_orphan_docs: spec({ count: "number", orphans: "unknownArray" }, true),
   get_workspace: fallible(spec({ id: "string", public: "boolean", enableAi: "boolean", createdAt: "string", permissions: "object", error: "string" }, true)),
   inspect_template_structure: spec({ workspaceId: "string", templateDocId: "string", title: "string", tags: "stringArray", pageId: "nullableString", surfaceId: "nullableString", noteId: "nullableString", rootBlockIds: "stringArray", blockCount: "number", blocks: "unknownArray", nativeCloneSupported: "boolean", fallbackReasons: "stringArray" }),
