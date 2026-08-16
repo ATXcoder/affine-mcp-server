@@ -17,6 +17,7 @@ import {
   setExplorerIcon,
   type ExplorerIconInput,
 } from "../util/explorerIcon.js";
+import { touchDocUpdatedDate } from "../util/touchDoc.js";
 
 /**
  * Zod shape for the `icon` parameter shared by both setters. Accepts an emoji
@@ -78,9 +79,11 @@ export function registerIconTools(
   }) => {
     const workspaceId = resolveWorkspaceId(parsed.workspaceId);
     const icon = normalizeIconInput(parsed.icon);
-    const result = await withSocket(workspaceId, (socket) =>
-      setExplorerIcon(socket, workspaceId, docIconKey(parsed.docId), icon),
-    );
+    const result = await withSocket(workspaceId, async (socket) => {
+      const outcome = await setExplorerIcon(socket, workspaceId, docIconKey(parsed.docId), icon);
+      await touchDocUpdatedDate(socket, workspaceId, parsed.docId);
+      return outcome;
+    });
     return receipt("doc.update_icon", {
       workspaceId,
       docId: parsed.docId,

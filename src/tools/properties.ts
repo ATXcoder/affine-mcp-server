@@ -5,6 +5,7 @@ import * as Y from "yjs";
 import { GraphQLClient } from "../graphqlClient.js";
 import { text } from "../util/mcp.js";
 import { secureRandomString } from "../util/random.js";
+import { touchDocUpdatedDate } from "../util/touchDoc.js";
 import {
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
@@ -449,6 +450,7 @@ export function registerPropertyTools(
       record.set(CUSTOM_PREFIX + def.id, encoded);
 
       await pushSubdoc(socket, workspaceId, DOC_PROPERTIES_GUID, doc, prevSV);
+      await touchDocUpdatedDate(socket, workspaceId, parsed.docId);
 
       return text({
         workspaceId,
@@ -515,6 +517,7 @@ export function registerPropertyTools(
       }
       if (cleared) {
         await pushSubdoc(socket, workspaceId, DOC_PROPERTIES_GUID, doc, prevSV);
+        await touchDocUpdatedDate(socket, workspaceId, parsed.docId);
       }
 
       return text({ workspaceId, docId: parsed.docId, propertyId, cleared });

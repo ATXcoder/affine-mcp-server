@@ -23,6 +23,7 @@ import {
   requireMatchingConfirmation,
 } from "../util/inputSchemas.js";
 import { secureRandomInt31, secureRandomString } from "../util/random.js";
+import { touchDocUpdatedDate } from "../util/touchDoc.js";
 import {
   wsUrlFromGraphQLEndpoint,
   connectWorkspaceSocket,
@@ -2788,6 +2789,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
+      await touchDocUpdatedDate(socket, workspaceId, normalized.docId);
 
       return {
         appended: true,
@@ -3685,6 +3687,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await touchDocUpdatedDate(socket, parsed.workspaceId, parsed.docId);
 
       return {
         appendedCount: blockIds.length,
@@ -3825,6 +3828,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       entry.set("id", docId);
       entry.set("title", title);
       entry.set("createDate", Date.now());
+      entry.set("updatedDate", Date.now());
       entry.set("tags", new Y.Array());
       pages.push([entry as any]);
       const wsDelta = Y.encodeStateAsUpdate(wsDoc, prevSV);
@@ -4001,6 +4005,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       entry.set("id", docId);
       entry.set("title", title);
       entry.set("createDate", Date.now());
+      entry.set("updatedDate", Date.now());
       entry.set("tags", new Y.Array());
       pages.push([entry as any]);
       const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
@@ -4169,6 +4174,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     entry.set("id", docId);
     entry.set("title", title);
     entry.set("createDate", Date.now());
+    entry.set("updatedDate", Date.now());
     entry.set("tags", new Y.Array());
     return entry;
   }
@@ -4495,6 +4501,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await touchDocUpdatedDate(socket, workspaceId, parsed.docId);
 
       return {
         workspaceId,
@@ -5202,6 +5209,9 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const { option, created: optionCreated } = ensureWorkspaceTagOption(wsMeta, tag);
       const pageTags = ensureTagArray(page.entry);
       const pageSync = syncTagArrayToOption(pageTags, tag, option);
+      if (pageSync.changed) {
+        page.entry.set("updatedDate", Date.now());
+      }
       const wsChanged = optionCreated || pageSync.changed;
       if (wsChanged) {
         const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
@@ -5288,6 +5298,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       const pageTagIndexes = collectMatchingTagIndexes(pageTags, tag, option, true);
       const pageRemoved = deleteArrayIndexes(pageTags, pageTagIndexes);
       if (pageRemoved) {
+        page.entry.set("updatedDate", Date.now());
         const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
         await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
       }
@@ -5400,6 +5411,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
         const indexes = collectMatchingTagIndexes(pageTags, option.id, null, false);
         if (deleteArrayIndexes(pageTags, indexes)) {
+          page.entry.set("updatedDate", Date.now());
           affectedDocIds.push(page.id);
         }
       }
@@ -5876,6 +5888,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       parentDocId,
       Buffer.from(delta).toString("base64"),
     );
+    await touchDocUpdatedDate(socket, workspaceId, parentDocId);
     return true;
   }
 
@@ -6992,7 +7005,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         const prevSV = Y.encodeStateVector(wsDoc);
         const pages = wsDoc.getMap("meta").get("pages") as Y.Array<any> | undefined;
         if (pages) pages.forEach((page: Y.Map<any>) => {
-          if (page instanceof Y.Map && page.get("id") === parsed.docId) page.set("title", newTitle);
+          if (page instanceof Y.Map && page.get("id") === parsed.docId) {
+            page.set("title", newTitle);
+            page.set("updatedDate", Date.now());
+          }
         });
         const delta = Y.encodeStateAsUpdate(wsDoc, prevSV);
         await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(delta).toString("base64"));
@@ -7065,6 +7081,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       for (const tag of parsed.tags) {
         pageTags.push([tag]);
       }
+      page.entry.set("updatedDate", Date.now());
 
       const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
       await pushDocUpdate(socket, parsed.workspaceId, parsed.workspaceId, Buffer.from(wsDelta).toString("base64"));
@@ -7999,6 +8016,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
       await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await touchDocUpdatedDate(ctx.socket, workspaceId, parsed.docId);
 
       return text({
         added: true,
@@ -8053,6 +8071,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
       await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await touchDocUpdatedDate(ctx.socket, workspaceId, parsed.docId);
 
       return text({
         deleted: true,
@@ -8239,6 +8258,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
       await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await touchDocUpdatedDate(ctx.socket, workspaceId, parsed.docId);
 
       return text({
         updated: true,
@@ -8331,6 +8351,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
       await pushDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await touchDocUpdatedDate(ctx.socket, workspaceId, parsed.docId);
 
       const finalLookup = buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock));
       const finalViews = readDatabaseViewDefs(ctx.dbBlock, finalLookup);
@@ -8481,6 +8502,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
+      await touchDocUpdatedDate(socket, workspaceId, parsed.docId);
 
       return text({
         added: true,
@@ -8952,6 +8974,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         params.docId,
         Buffer.from(delta).toString("base64")
       );
+      await touchDocUpdatedDate(socket, workspaceId, params.docId);
       return text({
         added: true,
         elementId,
@@ -9189,6 +9212,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         params.docId,
         Buffer.from(delta).toString("base64")
       );
+      await touchDocUpdatedDate(socket, workspaceId, params.docId);
       return text({
         updated: changed.length > 0,
         elementId: params.elementId,
@@ -9273,6 +9297,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         params.docId,
         Buffer.from(delta).toString("base64")
       );
+      await touchDocUpdatedDate(socket, workspaceId, params.docId);
       return text({ deleted: true, elementId: params.elementId, prunedConnectors });
     } finally {
       socket.disconnect();
@@ -9354,6 +9379,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         params.docId,
         Buffer.from(delta).toString("base64")
       );
+      await touchDocUpdatedDate(socket, workspaceId, params.docId);
       return text({
         updated: true,
         blockId: params.blockId,
@@ -9447,6 +9473,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         params.docId,
         Buffer.from(delta).toString("base64")
       );
+      await touchDocUpdatedDate(socket, workspaceId, params.docId);
       return text({ updated: changed.length > 0, blockId: params.blockId, flavour, changed, ignored });
     } finally {
       socket.disconnect();
@@ -9556,6 +9583,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         params.docId,
         Buffer.from(delta).toString("base64")
       );
+      await touchDocUpdatedDate(socket, workspaceId, params.docId);
       return text({ deleted: true, blockId: params.blockId, deletedIds, prunedConnectors });
     } finally {
       socket.disconnect();
