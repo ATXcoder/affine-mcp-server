@@ -189,7 +189,7 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `list_histories` | List document history timestamps | |
-| `recover_doc` | Revert a document to a prior version by timestamp | Requires an exact `timestamp` from `list_histories`; overwrites current content and is not reversible except by recovering to a different timestamp |
+| `recover_doc` | Revert a document to a prior version by timestamp | Requires an exact `timestamp` from `list_histories`. **Known unreliable on self-hosted AFFiNE (verified 2026-08-16):** reports success and records a backup history entry, but the doc's visible content may not actually change — reproduced against both this tool and AFFiNE's own web UI restore feature. Matches a known, recurring self-hosted history/restore bug category (toeverything/AFFiNE issues #9557, #10457, #10533, #11282). Always re-read the doc afterward to confirm; don't rely on this for real recovery until re-verified against a newer AFFiNE version |
 
 ## Users and authentication
 

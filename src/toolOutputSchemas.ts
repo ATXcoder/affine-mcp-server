@@ -114,7 +114,7 @@ const OUTPUT_SPECS = {
   read_database_cells: spec({ rows: "unknownArray" }),
   read_database_columns: spec({ databaseBlockId: "string", title: "nullableString", rowCount: "number", columnCount: "number", titleColumnId: "nullableString", columns: "unknownArray", views: "unknownArray" }),
   read_doc: spec({ docId: "string", title: "nullableString", tags: "stringArray", exists: "boolean", blockCount: "number", blocks: "unknownArray", plainText: "string", markdown: "string" }, true),
-  recover_doc: spec({ workspaceId: "string", docId: "string", timestamp: "string", recoveredAt: "string" }),
+  recover_doc: spec({ workspaceId: "string", docId: "string", timestamp: "string", recoveredAt: "string", warning: "string" }),
   remove_doc_from_collection: spec({ id: "string", name: "string", rules: "object", allowList: "stringArray" }),
   remove_tag_from_doc: spec({ workspaceId: "string", docId: "string", tag: "string", removed: "boolean", tags: "stringArray", docMetaSynced: "boolean", warning: "nullableString" }),
   rename_folder: spec({ id: "string", name: "string" }),
