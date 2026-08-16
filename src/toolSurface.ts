@@ -296,6 +296,7 @@ const CORE_TOOLS = new Set<ToolName>([
   "update_database_row",
   "update_doc_icon",
   "update_doc_title",
+  "upload_blob",
 ]);
 
 const AUTHORING_EXCLUDED_GROUPS = new Set([
