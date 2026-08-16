@@ -3846,14 +3846,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
   const JOURNAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-  function todayJournalDate(): string {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, "0");
-    const d = String(now.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }
-
   /**
    * Find AFFiNE's existing Journal entry for a date, or create one.
    * Mirrors AFFiNE's own JournalService.ensureJournalByDate: a journal doc is
@@ -3861,13 +3853,21 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
    * target date (YYYY-MM-DD), title conventionally matching. Lookup and the
    * fallback create both operate on the workspace root's Y.Doc directly, the
    * same CRDT-editing approach add_tag_to_doc/create_doc already use.
+   *
+   * `date` is required, not defaulted to "today" server-side: this process
+   * runs in the container's system timezone (typically UTC), which will not
+   * match the caller's local calendar day for a large fraction of every day.
+   * Callers must resolve "today" themselves and pass it explicitly.
    */
-  async function getOrCreateJournalDocInternal(parsed: { workspaceId?: string; date?: string }) {
+  async function getOrCreateJournalDocInternal(parsed: { workspaceId?: string; date: string }) {
     const workspaceId = parsed.workspaceId || defaults.workspaceId;
     if (!workspaceId) {
       throw new Error("workspaceId is required. Provide it or set AFFINE_WORKSPACE_ID.");
     }
-    const date = parsed.date?.trim() || todayJournalDate();
+    const date = parsed.date?.trim();
+    if (!date) {
+      throw new Error("date is required (YYYY-MM-DD) — this server does not guess \"today\" from its own clock, since its timezone will not generally match the caller's.");
+    }
     if (!JOURNAL_DATE_RE.test(date)) {
       throw new Error(`date must be in YYYY-MM-DD format, got "${date}".`);
     }
@@ -6044,7 +6044,7 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
   );
 
   // GET OR CREATE JOURNAL DOC
-  const getOrCreateJournalDocHandler = async (parsed: { workspaceId?: string; date?: string }) => {
+  const getOrCreateJournalDocHandler = async (parsed: { workspaceId?: string; date: string }) => {
     const result = await getOrCreateJournalDocInternal(parsed);
     return receipt("doc.get_or_create_journal", result);
   };
@@ -6052,10 +6052,10 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     "get_or_create_journal_doc",
     {
       title: "Get Or Create Journal Doc",
-      description: "Find AFFiNE's existing Journal (daily-note) entry for a given date, or create one if none exists yet. Defaults to today. Returns the doc's id, title, and whether it was just created — read/append to it like any other doc afterward, e.g. with append_markdown.",
+      description: "Find AFFiNE's existing Journal (daily-note) entry for a given date, or create one if none exists yet. Does NOT default to today: this server's own clock runs in the container's timezone, which will not generally match the caller's, so the caller must resolve \"today\" itself and pass it explicitly. Returns the doc's id, title, and whether it was just created — read/append to it like any other doc afterward, e.g. with append_markdown.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
-        date: z.string().regex(JOURNAL_DATE_RE, "Date must be in YYYY-MM-DD format.").optional().describe("Date to look up or create a journal entry for, in YYYY-MM-DD format. Defaults to today."),
+        date: z.string().regex(JOURNAL_DATE_RE, "Date must be in YYYY-MM-DD format.").describe("Date to look up or create a journal entry for, in YYYY-MM-DD format (the caller's local calendar day — this server does not infer it)."),
       },
     },
     getOrCreateJournalDocHandler as any
