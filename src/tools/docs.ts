@@ -3846,13 +3846,26 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
 
   const JOURNAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+  // AFFiNE's built-in per-doc properties (journal, docMode, cover, etc.) live
+  // in a dedicated CRDT sub-doc synced by guid `db$docProperties` — a
+  // WorkspaceDB (ORM-on-Yjs) table keyed by docId, NOT on the workspace root
+  // pageMeta entry or the doc's own meta map. See src/tools/properties.ts for
+  // the fuller citation (AFFiNE's modules/db/services/db.ts,
+  // orm/core/adapters/yjs/table.ts, modules/doc/entities/record.ts). Built-in
+  // properties are stored as plain keys on that per-doc record (unlike
+  // user-defined custom properties, which use a "custom:<propertyId>" key
+  // prefix and require a separate definition doc) — journal's own store
+  // (AFFiNE's JournalService, via `doc.setProperty('journal', date)`) writes
+  // exactly this way.
+  const AFFINE_DOC_PROPERTIES_GUID = "db$docProperties";
+
   /**
    * Find AFFiNE's existing Journal entry for a date, or create one.
    * Mirrors AFFiNE's own JournalService.ensureJournalByDate: a journal doc is
-   * a regular doc whose workspace pageMeta entry has `journal` set to the
+   * a regular doc whose `db$docProperties` record has `journal` set to the
    * target date (YYYY-MM-DD), title conventionally matching. Lookup and the
-   * fallback create both operate on the workspace root's Y.Doc directly, the
-   * same CRDT-editing approach add_tag_to_doc/create_doc already use.
+   * fallback create both operate on Y.Docs directly, the same CRDT-editing
+   * approach add_tag_to_doc/create_doc/set_doc_property already use.
    *
    * `date` is required, not defaulted to "today" server-side: this process
    * runs in the container's system timezone (typically UTC), which will not
@@ -3890,30 +3903,41 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         pages = new Y.Array();
         wsMeta.set("pages", pages);
       }
-
+      const pageById = new Map<string, Y.Map<any>>();
       for (const value of pages.toArray()) {
-        if (!(value instanceof Y.Map)) continue;
-        if (value.get("trash") === true) continue;
-        if (value.get("journal") === date) {
+        if (value instanceof Y.Map) {
           const id = value.get("id");
-          if (typeof id === "string" && id.length > 0) {
-            const title = value.get("title");
-            return {
-              workspaceId,
-              date,
-              docId: id,
-              title: typeof title === "string" ? title : date,
-              created: false,
-            };
-          }
+          if (typeof id === "string" && id.length > 0) pageById.set(id, value);
         }
+      }
+
+      const propsSnapshot = await loadDoc(socket, workspaceId, AFFINE_DOC_PROPERTIES_GUID);
+      const propsDoc = new Y.Doc();
+      if (propsSnapshot.missing) {
+        Y.applyUpdate(propsDoc, Buffer.from(propsSnapshot.missing, "base64"));
+      }
+      const propsPrevSV = Y.encodeStateVector(propsDoc);
+
+      for (const key of propsDoc.share.keys()) {
+        const record = propsDoc.getMap(key);
+        if (record.get("journal") !== date) continue;
+        const page = pageById.get(key);
+        if (page && page.get("trash") === true) continue;
+        const title = page?.get("title");
+        return {
+          workspaceId,
+          date,
+          docId: key,
+          title: typeof title === "string" ? title : date,
+          created: false,
+        };
       }
 
       // No existing journal entry for this date — create one, mirroring
       // createDocInternal's block layout, titled with the date itself
-      // (matching AFFiNE's own JournalService convention) and with the
-      // `journal` field set on both the doc's own meta and the workspace
-      // pageMeta entry.
+      // (matching AFFiNE's own JournalService convention), then set its
+      // `journal` value in the db$docProperties sub-doc — the location
+      // AFFiNE's JournalService/Journal panel actually reads from.
       const docId = generateId();
       const title = date;
       const ydoc = new Y.Doc();
@@ -3969,7 +3993,6 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       meta.set("title", title);
       meta.set("createDate", Date.now());
       meta.set("tags", new Y.Array());
-      meta.set("journal", date);
 
       const updateFull = Y.encodeStateAsUpdate(ydoc);
       await pushDocUpdate(socket, workspaceId, docId, Buffer.from(updateFull).toString("base64"));
@@ -3979,10 +4002,15 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
       entry.set("title", title);
       entry.set("createDate", Date.now());
       entry.set("tags", new Y.Array());
-      entry.set("journal", date);
       pages.push([entry as any]);
       const wsDelta = Y.encodeStateAsUpdate(wsDoc, wsPrevSV);
       await pushDocUpdate(socket, workspaceId, workspaceId, Buffer.from(wsDelta).toString("base64"));
+
+      const propsRecord = propsDoc.getMap(docId);
+      propsRecord.set("id", docId);
+      propsRecord.set("journal", date);
+      const propsDelta = Y.encodeStateAsUpdate(propsDoc, propsPrevSV);
+      await pushDocUpdate(socket, workspaceId, AFFINE_DOC_PROPERTIES_GUID, Buffer.from(propsDelta).toString("base64"));
 
       return {
         workspaceId,
