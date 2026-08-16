@@ -26,6 +26,17 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 
 `list_workspaces` and `get_workspace` add `name`, `avatar`, `url`, and `profileStatus` to the existing GraphQL fields. `profileStatus` is `available`, `unavailable`, or `skipped`. Profile loading is best effort, so a realtime metadata failure leaves the GraphQL workspace visible with nullable profile fields. The `avatar` value is AFFiNE's stored avatar reference and is not guaranteed to be an external URL.
 
+## Workspace members
+
+| Tool | Purpose | Notes |
+| --- | --- | --- |
+| `list_workspace_members` | List workspace members with userId, email, role, and invite status | Use to look up a userId, or pass an email directly to `grant_member`/`revoke_member` |
+| `invite_members` | Send workspace invitations by email | Requires SMTP configured on the server to actually deliver; without it, expect per-address errors even if a pending invite is still created. Does not set a role — new members join at the default role |
+| `create_invite_link` | Create a shareable, expiring workspace invite link | Works without SMTP — the practical path for a self-hosted deployment with no mail server configured |
+| `revoke_invite_link` | Invalidate the workspace's current invite link | |
+| `grant_member` | Change a member's role (`Owner`, `Admin`, `Collaborator`) | Accepts a userId or email; setting `Owner` transfers primary ownership |
+| `revoke_member` | Remove a member from the workspace | Accepts a userId or email; only removes membership, not their content |
+
 ## Organization
 
 | Tool | Purpose | Notes |
@@ -178,6 +189,7 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `list_histories` | List document history timestamps | |
+| `recover_doc` | Revert a document to a prior version by timestamp | Requires an exact `timestamp` from `list_histories`; overwrites current content and is not reversible except by recovering to a different timestamp |
 
 ## Users and authentication
 

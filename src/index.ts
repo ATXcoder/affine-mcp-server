@@ -16,6 +16,7 @@ import { registerAuthTools } from "./tools/auth.js";
 import { registerOrganizeTools } from "./tools/organize.js";
 import { registerPropertyTools } from "./tools/properties.js";
 import { registerIconTools } from "./tools/icons.js";
+import { registerMemberTools } from "./tools/members.js";
 import { runCli } from "./cli.js";
 import { startHttpMcpServer } from "./sse.js";
 import { existsSync } from "fs";
@@ -202,6 +203,7 @@ async function buildServer() {
   registerHistoryTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerOrganizeTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerPropertyTools(server, gql, { workspaceId: config.defaultWorkspaceId });
+  registerMemberTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerIconTools(server, gql, { workspaceId: config.defaultWorkspaceId });
   registerUserTools(server, gql);
   registerUserCRUDTools(server, gql);
