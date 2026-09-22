@@ -287,6 +287,7 @@ const READ_ONLY_TOOLS = new Set<ToolName>([
 const CORE_TOOLS = new Set<ToolName>([
   "add_database_column",
   "add_database_row",
+  "add_organize_link",
   "add_tag_to_doc",
   "append_block",
   "append_markdown",
@@ -313,6 +314,7 @@ const CORE_TOOLS = new Set<ToolName>([
   "list_workspace_members",
   "list_workspaces",
   "move_block",
+  "move_organize_node",
   "read_database_cells",
   "read_database_columns",
   "read_doc",
