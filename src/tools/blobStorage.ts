@@ -3,8 +3,9 @@ import { z } from "zod";
 import { GraphQLClient } from "../graphqlClient.js";
 import { blob, receipt, text, toolError } from "../util/mcp.js";
 import FormData from "form-data";
-import fetch, { type Response } from "node-fetch";
+import fetch from "node-fetch";
 import { requireMatchingConfirmation } from "../util/inputSchemas.js";
+import { readLimitedResponseBody } from "../util/httpResponse.js";
 
 export type BlobContentEncoding = "utf8" | "base64";
 
@@ -162,38 +163,6 @@ function cancelResponseBody(response: Response): void {
   }
 }
 
-async function readLimitedResponseBody(response: Response, maxResponseBytes: number): Promise<string> {
-  const contentLength = response.headers.get("content-length");
-  if (contentLength !== null) {
-    const declaredLength = Number(contentLength);
-    if (Number.isFinite(declaredLength) && declaredLength > maxResponseBytes) {
-      cancelResponseBody(response);
-      throw new Error(
-        `Blob upload response declared ${declaredLength} bytes; the configured limit is ${maxResponseBytes} bytes.`,
-      );
-    }
-  }
-
-  if (!response.body) {
-    return "";
-  }
-
-  const chunks: Buffer[] = [];
-  let receivedBytes = 0;
-  for await (const chunk of response.body) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    receivedBytes += buffer.length;
-    if (receivedBytes > maxResponseBytes) {
-      cancelResponseBody(response);
-      throw new Error(
-        `Blob upload response exceeded the configured limit of ${maxResponseBytes} bytes.`,
-      );
-    }
-    chunks.push(buffer);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
 async function readLimitedBinaryResponseBody(response: Response, maxResponseBytes: number): Promise<Buffer> {
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null) {
@@ -323,7 +292,11 @@ export function registerBlobTools(
           body: form as any,
           signal: controller.signal,
         });
-        const responseBody = await readLimitedResponseBody(response, uploadConfig.maxResponseBytes);
+        const responseBody = await readLimitedResponseBody(
+          response,
+          uploadConfig.maxResponseBytes,
+          "Blob upload response",
+        );
         let result: BlobUploadGraphQLResponse;
         try {
           result = parseUploadResponse(responseBody);

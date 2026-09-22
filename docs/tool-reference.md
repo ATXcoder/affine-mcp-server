@@ -12,6 +12,13 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 - Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` in production if you want a reduced surface
 - Invalid profile, group, and tool names stop startup; the server never falls back to a broader surface
 
+Handler failures are normalized into an MCP error result with `isError: true`,
+`ok: false`, a stable `code`, `retryable`, and `recoveryGuidance`. Authentication
+or network classification may also appear as `causeCode` when it differs from
+the primary code. SDK-level input or schema validation can remain a native
+protocol error. Use the returned fields to decide whether to inspect, correct,
+or retry an operation; do not infer success from human-readable error text.
+
 ## Workspace
 
 | Tool | Purpose | Notes |
@@ -19,12 +26,37 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `list_workspaces` | List all available workspaces | Includes best-effort profile names, avatar references, and direct URLs; set `includeProfile: false` for a faster GraphQL-only response |
 | `get_workspace` | Read workspace details | Includes permissions plus best-effort profile metadata and a direct URL |
 | `create_workspace` | Create a workspace with an initial document | Destructive in the sense that it creates new server state |
-| `update_workspace` | Update workspace settings | Use carefully in shared workspaces |
+| `update_workspace` | Update workspace settings | Requires at least one of `public` or `enableAi`; use carefully in shared workspaces |
 | `delete_workspace` | Permanently delete a workspace | Destructive; `confirmWorkspaceId` must exactly match `id`; unconfirmed outcomes return an MCP error instead of a success receipt |
 | `list_workspace_tree` | Return the workspace document hierarchy as a tree | Useful before moving docs; depth is limited to 0-20 |
 | `get_orphan_docs` | Find documents that are not linked from a parent doc | Useful for cleanup and audits |
 
 `list_workspaces` and `get_workspace` add `name`, `avatar`, `url`, and `profileStatus` to the existing GraphQL fields. `profileStatus` is `available`, `unavailable`, or `skipped`. Profile loading is best effort, so a realtime metadata failure leaves the GraphQL workspace visible with nullable profile fields. The `avatar` value is AFFiNE's stored avatar reference and is not guaranteed to be an external URL.
+
+Document metadata tools that load the workspace-root snapshot distinguish an
+unavailable root from an empty one. `workspace_root_unavailable` means the root
+snapshot could not be loaded or confirmed; it must not be presented as a
+workspace with zero documents. An empty workspace is reported only after the
+root is loaded successfully and contains no document entries. This code does not
+describe the best-effort profile loading used by `list_workspaces` or
+`get_workspace` above. Check `recoveryGuidance` and `affine-mcp doctor` before
+trying again.
+
+`create_workspace` creates the server workspace first and then synchronizes its
+initial document. A partial result keeps `ok: true` because the workspace exists
+and includes `workspaceId`, `firstDocId`, `status`/`syncStatus: "partial"`, and
+`requiresManualRepair: true` when the follow-up sync is unconfirmed. Treat the
+IDs as durable recovery handles: call `read_doc` with that workspace and
+`firstDocId` first, because the timed-out sync may still complete, then repair
+the existing document if needed. The message and `recoveryGuidance` state that
+no automatic retry is scheduled; callers must not issue a second
+`create_workspace` request that could produce a duplicate workspace.
+
+Generated `url` fields are browser links built from the configured AFFiNE base
+URL. `AFFINE_GRAPHQL_PATH` changes the API endpoint only; it is not appended to
+workspace or document links. For a custom route, keep the deployment base in
+`AFFINE_BASE_URL` and set the route separately, for example
+`AFFINE_GRAPHQL_PATH=/api/graphql`.
 
 ## Workspace members
 
@@ -60,6 +92,8 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `add_organize_link` | Add a doc, tag, or collection link under a folder | Experimental |
 | `delete_organize_link` | Delete a doc, tag, or collection link | Experimental and destructive |
 
+Collection rules accept `title` with `contains`, `equals`, or `startsWith`; `tag` with `contains` or `equals`; and `docId` with `equals` or `in`. All values are trimmed nonblank strings, except `docId` with `in`, which requires a nonempty list of nonblank strings. Invalid combinations reject the entire request before changing membership; they are never silently dropped from a submitted rule set.
+
 ## Documents
 
 ### Discovery and metadata
@@ -68,15 +102,38 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | --- | --- | --- |
 | `list_docs` | List documents with pagination | Includes `node.tags` |
 | `list_tags` | List all tags in a workspace | |
-| `search_docs` | Search titles with substring, prefix, or exact matching | Supports tag filter and updatedAt sorting; limit is 1-200 |
+| `search_docs` | Search titles with substring, prefix, or exact matching | Supports tag filter, updatedAt sorting, and zero-based `offset`; limit is 1-200 |
 | `search_doc_content` | Full-text search across document content via AFFiNE's server-side keyword search | Returns a highlight snippet and blockId per match when available; complements `search_docs`, which only matches titles |
 | `find_doc_by_title` | Find documents whose title exactly matches a supplied title | Supports optional case-insensitive matching and a result limit |
 | `list_docs_by_tag` | List documents with a specific tag | |
 | `get_doc` | Read document metadata | |
-| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include `linkedDocIds` for inline LinkedPage references |
+| `read_doc` | Read block content and plain text snapshot | WebSocket-backed; block rows include formatting-preserving `deltas`, hierarchy-derived `parentId` values, and `linkedDocIds` for inline LinkedPage references |
 | `get_capabilities` | Inspect the server's high-level authoring and fidelity capabilities | Useful for adaptive clients |
 | `analyze_doc_fidelity` | Analyze how a document maps to Markdown and which native AFFiNE structures are lossy | Good before export or migration |
 | `list_children` | List direct child docs linked from a document | |
+
+`search_docs` uses zero-based `offset` pagination over the matching metadata
+entries. Its response includes `offset`, `limit`, `totalCount`, `hasMore`,
+`truncated`, and `nextOffset` alongside `results`:
+
+- `hasMore` is true when another matching page remains after the returned rows.
+- `truncated` is true when the requested `limit` capped the current response;
+  it is a signal to continue with `nextOffset`, not an indication that results
+  were lost.
+- `nextOffset` is the next offset to request when more rows remain and is null
+  when the page is complete.
+
+Continue while `hasMore` is true. An empty `results` array is not by itself a
+failure or proof that the workspace has no documents; check `totalCount` and
+`nextOffset` as well.
+
+`get_capabilities` separates what the server supports from what this process
+currently exposes. `server.supportedTools` is the full implemented tool list;
+`server.effective.profile` and `server.effective.enabledTools` describe the
+surface after `AFFINE_TOOL_PROFILE`, disabled groups/tools, and any auth-mode
+policy are applied. A capability can therefore be supported while its related
+tool is absent from `tools/list`; use `tools/list` as the final callable-surface
+check.
 
 ### Publish and visibility
 
@@ -89,13 +146,20 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `create_doc` | Create a new document | WebSocket-backed |
-| `create_doc_from_markdown` | Create a document from Markdown content | `[label](LinkedPage:<docId>)` links become native inline linked-doc references |
+| `create_doc` | Create a new document | `content` is stored as one plain paragraph; accepts `folderId` for immediate organize-folder placement |
+| `create_doc_from_markdown` | Create a document from Markdown content | Creates native blocks, accepts `folderId` for immediate organize-folder placement, and converts `[label](LinkedPage:<docId>)` links to native inline linked-doc references |
 | `get_or_create_journal_doc` | Find AFFiNE's existing Journal (daily-note) entry for a date, or create one | `date` is required, not defaulted server-side — the container's clock/timezone won't generally match the caller's; matches AFFiNE's own JournalService date-title convention (`YYYY-MM-DD`) |
 | `inspect_template_structure` | Inspect a template's native AFFiNE structure and native-clone support | Helps choose a clone strategy |
 | `instantiate_template_native` | Instantiate a template via native AFFiNE block cloning, with optional Markdown fallback | Higher-fidelity than Markdown-only cloning |
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
+| `trash_doc` | Move a document to the AFFiNE trash | Recoverable with `restore_doc`; preserves document content and is safe to retry |
+| `restore_doc` | Restore a document from the AFFiNE trash | Preserves document content and is safe to retry |
 | `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`, and metadata removal plus acknowledged or verified content deletion are reported separately |
+
+Use `create_doc_from_markdown` when the initial content contains headings, lists,
+links, quotes, tables, or code fences. `create_doc.content` does not parse Markdown;
+when structured Markdown is detected, its receipt warns that the content was
+stored as one plain paragraph.
 
 ### Content editing
 
@@ -104,11 +168,37 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | `update_doc_title` | Rename a document in workspace metadata and in the page block | |
 | `update_doc_icon` | Set or clear a document's sidebar icon (emoji or named icon) | |
 | `get_doc_icon` | Read a document's current sidebar icon | |
-| `append_block` | Append canonical block types with validation and placement control | Supports text, media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
+| `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
+| `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
+| `update_table_cell` | Replace one cell in an existing AFFiNE table | Uses zero-based row/column coordinates, preserves arbitrary inline attributes, and keeps the first row bold. Plain-text updates preserve existing cell formatting when the text is unchanged. |
+| `update_table_column_widths` | Set every column width in an existing AFFiNE table | Widths follow current column order. Values are 60–4096 px; `null` restores AFFiNE's automatic width. `read_doc` returns `tableColumnWidths` for exact readback and rollback. |
+| `move_block` | Move or reorder an existing block without changing its id | Reuses `append_block` placement (`parentId`, `beforeBlockId`, `afterBlockId`, or `index`) and rejects root moves and cycles. |
 | `create_semantic_page` | Create an AFFiNE-native page with an intentional section skeleton and native block composition | High-level authoring helper |
 | `append_semantic_section` | Append a semantic section to an existing page by heading title | High-level authoring helper |
 | `append_markdown` | Append Markdown content to an existing document | |
-| `replace_doc_with_markdown` | Replace the main note content with Markdown | Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
+| `replace_doc_with_markdown` | Replace the main note content with Markdown | Destructive; requires `full` with the `destructive` group enabled. Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
+
+#### Document creation failures
+
+Document content and workspace metadata are persisted separately. Creation tools (`create_doc`, `create_doc_from_markdown`, `create_semantic_page`, and `instantiate_template_native`) reconcile failed writes using the same generated document ID and check existing metadata before retrying registration.
+
+If completion still cannot be confirmed, the tool returns `isError: true`, `ok: false`, the allocated `workspaceId` and `docId`, the failed `stage`, and `recoveryGuidance`. `contentPersisted` and `metadataPersisted` are `true`, `false`, or `null` when read-back was unavailable. `DOCUMENT_CREATE_PARTIAL` identifies persisted content with missing workspace metadata; `DOCUMENT_CREATE_UNCERTAIN` identifies an unconfirmed outcome. For Markdown or native-template materialization failures, `contentPersisted: null` means the requested content is unconfirmed even though the document shell may already exist. These responses set `retryable: false`: inspect the returned document ID and reconcile its metadata before issuing another creation request, which would allocate a different ID.
+
+For `list_docs`, pagination follows the backend page even when deleted entries are filtered out. An empty visible page can still have `hasNextPage: true`; continue with its `endCursor` instead of treating an empty `edges` array as the end of the workspace.
+
+#### Formatting-preserving block text
+
+For inline-rich-text blocks, `append_block.text`, `update_block.text`, and `update_table_cell.text` accept either a string or a delta array. Each delta requires a string `insert` and may contain arbitrary `attributes`; the server passes attributes through without restricting them to a fixed formatting vocabulary.
+
+```json
+[
+  { "insert": "plain " },
+  { "insert": "colored", "attributes": { "color": "var(--affine-text-highlight-foreground-blue)" } },
+  { "insert": " highlighted", "attributes": { "background": "var(--affine-text-highlight-yellow)" } }
+]
+```
+
+`read_doc` block rows and block snapshots returned by editing tools include both flattened `text` and formatting-preserving `deltas`; table rows additionally include the full `tableData` matrix and `tableCellDeltas`. Markdown export still reports and drops inline attributes it cannot represent; use `deltas` for lossless block-level read/modify/write flows.
 
 ### Tags
 
@@ -141,12 +231,12 @@ Use this document as a grouped catalog. For exact schemas, your MCP client shoul
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `compose_database_from_intent` | Create or enrich a database block from a high-level schema intent | Useful for project boards and structured tables |
-| `add_database_column` | Add a column to a database block | Supports `rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, and `date` |
-| `add_database_row` | Add a row to a database block | Can set the built-in title field |
+| `add_database_column` | Add a column to a database block | Supports `title`, `rich-text`, `select`, `multi-select`, `number`, `checkbox`, `link`, and `date`; rejects a title addition when the current snapshot already contains one |
+| `add_database_row` | Add a row to a database block | Rich-text and title values accept strings or delta arrays |
 | `delete_database_row` | Delete a row by row block id | Destructive |
 | `read_database_columns` | Read schema metadata, types, options, and view mappings | Useful before edits |
-| `read_database_cells` | Read row titles and decoded cell values | Supports row and column filters |
-| `update_database_row` | Update multiple cells on a row at once | `createOption` defaults to `true` |
+| `read_database_cells` | Read row titles and decoded cell values | Rich-text titles and cells include plain values and formatting-preserving deltas |
+| `update_database_row` | Update multiple cells on a row at once | Rich-text deltas are preserved; `createOption` defaults to `true` |
 
 ## Edgeless canvas and surface elements
 
@@ -161,7 +251,7 @@ AFFiNE's edgeless doc has two layers: top-level edgeless blocks (`note`, `frame`
 | `delete_surface_element` | Delete an element by id | `pruneConnectors: true` additionally removes any connectors referencing the deleted element. |
 | `update_frame_children` | Replace a frame block's contents wholesale | Every resolved id (surface element or edgeless block) goes into `prop:childElementIds` and comes back in `ownedIds`; unknown ids in `missing`. Default `resizeToFit: true` recomputes xywh to match new contents + `padding` + title band; pass `resizeToFit: false` to preserve the current box. Pass `[]` to clear ownership (resize skipped). |
 | `update_edgeless_block` | Partially update a note/frame/edgeless-text block | `x`/`y`/`width`/`height` merge with current `prop:xywh`; `background` replaces `prop:background`. Fields not applicable to the flavour come back under `ignored`. Use for repositioning / resizing / recoloring without re-creating the block. |
-| `delete_block` | Delete a block by id | Removes descendants and unlinks from the parent's `sys:children` by default. `deleteChildren: false` keeps descendants orphaned; `pruneConnectors: true` also drops surface connectors referencing any deleted id. Refuses `affine:page`. |
+| `delete_block` | Delete a block by id | Returns the deleted root and descendant snapshots so callers can reconstruct content. Removes descendants and unlinks from the parent's `sys:children` by default. `deleteChildren: false` keeps descendants orphaned; `pruneConnectors: true` also drops surface connectors referencing any deleted id. Refuses `affine:page`. |
 
 ### Layout helpers on `append_block`
 
@@ -197,7 +287,7 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | --- | --- | --- |
 | `current_user` | Return the current signed-in user | |
 | `sign_in` | Sign in with email and password | Self-hosted flows only for direct programmatic sign-in |
-| `update_profile` | Update current user profile data | |
+| `update_profile` | Update current user profile data | Requires at least one of `name` or `avatarUrl` |
 | `update_settings` | Update user notification preferences | |
 
 ## Notifications
@@ -226,3 +316,46 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | `get_blob` | Download a blob (e.g. an image referenced by a doc) and return its bytes | Image content types return as inline MCP image content; everything else returns as an embedded binary resource. Capped at `AFFINE_BLOB_DOWNLOAD_MAX_BYTES` (default 10MB) |
 | `delete_blob` | Delete a blob from workspace storage | Permanent deletion requires `confirmKey` to exactly match `key`; false, exception, and unconfirmed outcomes return stable MCP errors |
 | `cleanup_blobs` | Permanently remove deleted blobs | `confirmWorkspaceId` must exactly match `workspaceId`; false, exception, and unconfirmed outcomes return stable MCP errors |
+
+## Native mindmaps
+
+See the [native mindmap guide](native-mindmaps.md) for request/response fields,
+an executable workflow example, validation behavior, and deployment links.
+
+| Tool | Purpose | Notes |
+| --- | --- | --- |
+| `create_mindmap` | Create a native mindmap root in an existing document | Returns `mindmapId` and `rootId`; default style ONE |
+| `get_mindmap` | Read validated topology, child order, labels, collapsed state and geometry | Discover IDs with `get_edgeless_canvas` |
+| `add_mindmap_node` | Append or insert a child of `parentId` | `beforeId` must be a sibling; returns `nodeId` |
+| `update_mindmap_node` | Replace text or change collapsed state | Keeps IDs and parent links |
+| `reparent_mindmap_node` | Move a node and its descendants within the same map | Rejects root moves, cycles and foreign IDs |
+| `set_mindmap_layout` | Persist direction and node coordinates together | `right`, `left`, `balance`; no `down`/`up` |
+| `set_mindmap_style` | Apply native style and persist node appearance/size | `style`: integer 1–4; keeps hierarchy |
+| `set_mindmap_lock` | Set native map lock inherited by its nodes | `locked`: boolean; retains independent node/ancestor locks |
+
+These operations store a native `type=mindmap` element with a `Y.Map` of shape IDs
+and `{index, parent?, collapsed?}` details. They do not create ordinary connectors;
+BlockSuite derives its own local connectors from the hierarchy. Shape nodes only,
+maximum 500 nodes and depth 64. Node removal is deliberately not exposed.
+
+Layout values are verified against [AFFiNE 174ad9bc5](https://github.com/toeverything/AFFiNE/blob/174ad9bc5/blocksuite/affine/model/src/consts/mindmap.ts):
+RIGHT=0, LEFT=1, BALANCE=2. Downward layout requires an editor change, not a new MCP
+enum value. Positions are persisted because remote changes do not trigger every
+local editor watcher. Text dimensions are estimated; the native editor may refine
+them when opened. The root remains anchored during layout and reparenting.
+
+Styles ONE=1, TWO=2, THREE=3, FOUR=4 are supported by `set_mindmap_style` and
+the optional creation `style` (default ONE). `set_mindmap_lock` writes native
+`lockedBySelf`; effective `locked` also includes containing group locks. Other
+mutations reject locked maps/nodes. Unlock keeps independent node locks intact.
+
+Create a document with its intended `folderId` first and verify its sidebar link,
+then create a root, add project children to `rootId`, and add tasks to the returned
+project `nodeId`. One shared MCP server serializes hierarchy mutations per
+workspace. Document writes accept optional `expectedRevision` from `read_doc`
+to reject stale content before mutation. The upstream persistence API has no
+compare-and-swap: independent server processes or native editors can still race;
+read back the map after a batch. See [concurrent writes](configuration-and-deployment.md#concurrent-writes).
+A failed push may have an uncertain outcome,
+so inspect the document before retrying creation. Existing malformed or shared
+node ownership is rejected before persistence.
