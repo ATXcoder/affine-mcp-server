@@ -149,7 +149,12 @@ export function decodeBlobContent(
   return decoded;
 }
 
-function cancelResponseBody(response: Response): void {
+type BinaryResponseLike = {
+  body: unknown;
+  headers: { get(name: string): string | null };
+};
+
+function cancelResponseBody(response: BinaryResponseLike): void {
   const body = response.body as unknown as {
     destroy?: () => void;
     cancel?: () => Promise<void>;
@@ -163,7 +168,7 @@ function cancelResponseBody(response: Response): void {
   }
 }
 
-async function readLimitedBinaryResponseBody(response: Response, maxResponseBytes: number): Promise<Buffer> {
+async function readLimitedBinaryResponseBody(response: BinaryResponseLike, maxResponseBytes: number): Promise<Buffer> {
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null) {
     const declaredLength = Number(contentLength);
@@ -181,7 +186,7 @@ async function readLimitedBinaryResponseBody(response: Response, maxResponseByte
 
   const chunks: Buffer[] = [];
   let receivedBytes = 0;
-  for await (const chunk of response.body) {
+  for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     receivedBytes += buffer.length;
     if (receivedBytes > maxResponseBytes) {

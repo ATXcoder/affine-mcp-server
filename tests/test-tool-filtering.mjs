@@ -353,14 +353,13 @@ async function run() {
       AFFINE_TOOL_PROFILE: "core",
     });
     const trimmed = [
-      "replace_doc_with_markdown",
       "delete_workspace",
       "cleanup_blobs",
       "create_workspace_blueprint",
       "add_organize_link",
     ];
     const unexpectedlyVisible = trimmed.filter(t => tools7.includes(t));
-    const coreExpected = ["create_doc", "append_block", "move_block", "read_doc", "trash_doc", "restore_doc", "update_block", "update_table_cell", "update_database_row"];
+    const coreExpected = ["create_doc", "append_block", "move_block", "read_doc", "trash_doc", "restore_doc", "update_block", "update_table_cell", "update_database_row", "replace_doc_with_markdown", "list_organize_nodes"];
     const coreMissing = coreExpected.filter(t => !tools7.includes(t));
     if (unexpectedlyVisible.length === 0 && coreMissing.length === 0) {
       console.log("✅ Success: Core profile exposes the compact everyday surface.");
