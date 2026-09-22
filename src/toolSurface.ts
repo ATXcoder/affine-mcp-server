@@ -279,6 +279,7 @@ const CORE_TOOLS = new Set<ToolName>([
   "list_docs",
   "list_docs_by_tag",
   "list_histories",
+  "list_organize_nodes",
   "list_tags",
   "list_workspace_members",
   "list_workspaces",
