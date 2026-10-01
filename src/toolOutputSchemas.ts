@@ -119,7 +119,7 @@ const OUTPUT_SPECS = {
   list_children: spec({ docId: "string", count: "number", children: "unknownArray" }, true),
   list_collections: spec({ items: "unknownArray" }),
   list_comments: spec({ totalCount: "number", pageInfo: "object", edges: "unknownArray" }),
-  list_doc_properties: spec({ workspaceId: "string", docId: "string", definitions: "unknownArray", properties: "unknownArray", orphanValues: "unknownArray" }),
+  list_doc_properties: { ...spec({ workspaceId: "string", docId: "string", definitions: "unknownArray", properties: "unknownArray", orphanValues: "unknownArray" }), optionalFields: { legacy: "object" } },
   list_docs: spec({ totalCount: "number", pageInfo: "object", edges: "unknownArray" }),
   list_docs_by_tag: spec({ workspaceId: "string", tag: "string", ignoreCase: "boolean", totalDocs: "number", docs: "unknownArray" }),
   list_histories: spec({ items: "unknownArray" }),
@@ -200,7 +200,7 @@ function fieldSchema(kind: FieldKind): ZodType {
     case "icon": return z.union([
       z.string(),
       z.object({ type: z.literal("emoji"), unicode: z.string() }),
-      z.object({ type: z.literal("icon"), name: z.string() }),
+      z.object({ type: z.enum(["affine-icon", "icon"]), name: z.string(), color: z.string().optional() }),
       z.null(),
     ]);
     case "null": return z.null();

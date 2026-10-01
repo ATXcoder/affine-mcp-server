@@ -8,6 +8,10 @@ import { fileURLToPath } from 'node:url';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import * as Y from 'yjs';
+
+import { acquireCredentials } from './acquire-credentials.mjs';
+import { connectWorkspaceSocket, joinWorkspace, loadDoc, wsUrlFromGraphQLEndpoint } from '../dist/ws.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MCP_SERVER_PATH = path.resolve(__dirname, '..', 'dist', 'index.js');
@@ -41,6 +45,52 @@ function expectTruthy(value, message) {
   }
 }
 
+async function readWorkspacePageUpdatedDate(workspaceId, docId, expectedCreator) {
+  const { cookie } = await acquireCredentials(BASE_URL, EMAIL, PASSWORD);
+  const socket = await connectWorkspaceSocket(
+    wsUrlFromGraphQLEndpoint(`${BASE_URL.replace(/\/+$/, '')}/graphql`),
+    cookie,
+  );
+  try {
+    await joinWorkspace(socket, workspaceId);
+    // Inspect the wire document before opening the UI, which can migrate properties.
+    const propertiesSnapshot = await loadDoc(socket, workspaceId, `db$${workspaceId}$docProperties`);
+    assert.equal(typeof propertiesSnapshot.missing, 'string', 'workspace-scoped docProperties exists');
+    const properties = new Y.Doc();
+    try {
+      Y.applyUpdate(properties, Buffer.from(propertiesSnapshot.missing, 'base64'));
+      const record = properties.getMap(docId);
+      assert.equal(record.get('id'), docId, 'creator record uses the page id');
+      assert.equal(record.get('createdBy'), expectedCreator, 'creator is the authenticated AFFiNE user');
+    } finally {
+      properties.destroy();
+    }
+    const snapshot = await loadDoc(socket, workspaceId, workspaceId);
+    if (typeof snapshot.missing !== 'string') {
+      throw new Error(`Workspace root metadata was not available for ${workspaceId}`);
+    }
+
+    const workspaceDoc = new Y.Doc();
+    try {
+      Y.applyUpdate(workspaceDoc, Buffer.from(snapshot.missing, 'base64'));
+      const pages = workspaceDoc.getMap('meta').get('pages');
+      if (!(pages instanceof Y.Array)) {
+        throw new Error(`Workspace ${workspaceId} has no root meta.pages array`);
+      }
+      const page = pages.toArray().find(entry => entry instanceof Y.Map && entry.get('id') === docId);
+      const updatedDate = page instanceof Y.Map ? page.get('updatedDate') : undefined;
+      if (typeof updatedDate !== 'number' || !Number.isFinite(updatedDate) || updatedDate <= 0) {
+        throw new Error(`Document ${docId} has no valid root meta.pages[].updatedDate`);
+      }
+      return updatedDate;
+    } finally {
+      workspaceDoc.destroy();
+    }
+  } finally {
+    socket.disconnect();
+  }
+}
+
 function assertDerivedParentIds(readDocPayload) {
   const blocks = Array.isArray(readDocPayload?.blocks) ? readDocPayload.blocks : [];
   const expectedParents = new Map();
@@ -65,11 +115,18 @@ async function main() {
     email: EMAIL,
     workspaceId: null,
     docId: null,
+    documentTitle: 'Block Editing E2E',
+    updatedDate: null,
+    creatorId: null,
+    creatorName: null,
     inboxHeadingBlockId: null,
     taskBlockId: null,
     quoteBlockId: null,
     codeBlockId: null,
     tableBlockId: null,
+    referenceBlockId: null,
+    referenceTableBlockId: null,
+    referenceTargetTitle: 'Linked Page Reference Target',
     emptyTableBlockId: null,
     emptyOverrideTableBlockId: null,
     taskText: 'Ship the verified release',
@@ -181,17 +238,141 @@ async function main() {
   try {
     await client.connect(transport);
 
+    const user = await call('current_user');
+    state.creatorId = user.id;
+    state.creatorName = user.name;
+    expectTruthy(state.creatorId, 'authenticated user id');
+
     const workspace = await call('create_workspace', { name: testResourceName('block-editing') });
     state.workspaceId = workspace?.id || workspace?.workspaceId;
     expectTruthy(state.workspaceId, 'create_workspace id');
+    await readWorkspacePageUpdatedDate(state.workspaceId, workspace.firstDocId, state.creatorId);
 
     const document = await call('create_doc', {
       workspaceId: state.workspaceId,
-      title: 'Block Editing E2E',
+      title: state.documentTitle,
       content: '',
     });
     state.docId = document?.docId;
     expectTruthy(state.docId, 'create_doc docId');
+    await readWorkspacePageUpdatedDate(state.workspaceId, state.docId, state.creatorId);
+
+    // All creation paths must populate the same native creator record.
+    for (const [tool, input] of [
+      ['create_doc_from_markdown', { title: 'Creator Markdown', markdown: '# Authored through MCP' }],
+      ['create_semantic_page', { title: 'Creator Semantic', sections: [{ title: 'Summary', paragraphs: ['Authored through MCP'] }] }],
+      ['instantiate_template_native', { title: 'Creator Native Template', templateDocId: state.docId }],
+    ]) {
+      const created = await call(tool, { workspaceId: state.workspaceId, ...input });
+      expectTruthy(created.docId, `${tool} docId`);
+      await readWorkspacePageUpdatedDate(state.workspaceId, created.docId, state.creatorId);
+    }
+
+    const referenceTarget = await call('create_doc', {
+      workspaceId: state.workspaceId,
+      title: state.referenceTargetTitle,
+      content: '',
+    });
+    expectTruthy(referenceTarget?.docId, 'LinkedPage reference target doc id');
+    const referenceAttributes = { reference: { type: 'LinkedPage', pageId: referenceTarget.docId } };
+    const appendedReferenceDeltas = [
+      { insert: 'Mention ' },
+      { insert: ' ', attributes: referenceAttributes },
+      { insert: ' from append_block.' },
+    ];
+    const updatedReferenceDeltas = [
+      { insert: 'See ' },
+      { insert: ' ', attributes: referenceAttributes },
+      { insert: ' in the editor.' },
+    ];
+    const appendedReferenceCellDeltas = [
+      { insert: ' ', attributes: referenceAttributes },
+      { insert: ' appended' },
+    ];
+    const updatedReferenceCellDeltas = [
+      { insert: ' ', attributes: referenceAttributes },
+      { insert: ' updated' },
+    ];
+
+    const referenceBlock = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'paragraph',
+      text: appendedReferenceDeltas,
+    });
+    state.referenceBlockId = referenceBlock?.blockId;
+    expectTruthy(state.referenceBlockId, 'append_block LinkedPage paragraph id');
+    await call('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.referenceBlockId,
+      text: updatedReferenceDeltas,
+    });
+    const legacyReferenceUpdate = await call('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.referenceBlockId,
+      text: [
+        { insert: 'See ' },
+        { insert: '\u200B', attributes: referenceAttributes },
+        { insert: ' in the editor.' },
+      ],
+    });
+    assert.deepEqual(
+      legacyReferenceUpdate?.block?.deltas,
+      updatedReferenceDeltas,
+      'update_block normalizes the exact legacy zero-width LinkedPage sentinel',
+    );
+
+    const referenceTable = await call('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'table',
+      rows: 2,
+      columns: 1,
+      tableData: [['Reference'], ['fallback']],
+      tableCellDeltas: [[[{ insert: 'Reference' }]], [appendedReferenceCellDeltas]],
+    });
+    state.referenceTableBlockId = referenceTable?.blockId;
+    expectTruthy(state.referenceTableBlockId, 'append_block LinkedPage table id');
+    await call('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.referenceTableBlockId,
+      row: 1,
+      column: 0,
+      text: updatedReferenceCellDeltas,
+    });
+
+    const beforeRejectedAppend = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    const blockIdsBeforeRejectedAppend = beforeRejectedAppend.blocks.map(block => block.id).sort();
+    await expectCallError('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'paragraph',
+      text: [{ insert: 'Component register', attributes: referenceAttributes }],
+    }, /native reference sentinel/);
+    await expectCallError('append_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      type: 'table',
+      rows: 1,
+      columns: 1,
+      tableData: [['fallback']],
+      tableCellDeltas: [[[{ insert: 'Component register', attributes: referenceAttributes }]]],
+    }, /native reference sentinel/);
+    const afterRejectedAppend = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    assert.deepEqual(
+      afterRejectedAppend.blocks.map(block => block.id).sort(),
+      blockIdsBeforeRejectedAppend,
+      'rejected append_block text and tableCellDeltas do not add document blocks',
+    );
 
     const inboxHeading = await call('append_block', {
       workspaceId: state.workspaceId,
@@ -488,6 +669,40 @@ async function main() {
       blockId: state.taskBlockId,
       type: 'paragraph',
     }, /while preserving its id/);
+    await expectCallError('update_block', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.referenceBlockId,
+      text: [{ insert: 'Component register', attributes: referenceAttributes }],
+    }, /native reference sentinel/);
+    const afterRejectedReferenceUpdate = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    const unchangedReferenceBlock = afterRejectedReferenceUpdate.blocks.find(block => block.id === state.referenceBlockId);
+    assert.deepEqual(
+      unchangedReferenceBlock?.deltas,
+      updatedReferenceDeltas,
+      'rejected LinkedPage update_block preserves the previous reference delta',
+    );
+    await expectCallError('update_table_cell', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+      blockId: state.referenceTableBlockId,
+      row: 1,
+      column: 0,
+      text: [{ insert: 'Component register', attributes: referenceAttributes }],
+    }, /native reference sentinel/);
+    const afterRejectedReferenceCellUpdate = await call('read_doc', {
+      workspaceId: state.workspaceId,
+      docId: state.docId,
+    });
+    const unchangedReferenceTable = afterRejectedReferenceCellUpdate.blocks.find(block => block.id === state.referenceTableBlockId);
+    assert.deepEqual(
+      unchangedReferenceTable?.tableCellDeltas,
+      [[[{ insert: 'Reference', attributes: { bold: true } }]], [updatedReferenceCellDeltas]],
+      'rejected LinkedPage update_table_cell preserves the previous reference delta',
+    );
     const afterRejectedUpdate = await call('read_doc', {
       workspaceId: state.workspaceId,
       docId: state.docId,
@@ -602,6 +817,14 @@ async function main() {
     );
     expectEqual(tableBlock.tableData[0][1], state.tableSiblingHeaderText, 'table header sibling unchanged');
     expectEqual(tableBlock.tableData[1][1], state.tableSiblingDataText, 'table data sibling unchanged');
+    const linkedReferenceBlock = blocks.find(block => block.id === state.referenceBlockId);
+    assert.deepEqual(linkedReferenceBlock?.deltas, updatedReferenceDeltas, 'read_doc returns native LinkedPage reference deltas');
+    const linkedReferenceTable = blocks.find(block => block.id === state.referenceTableBlockId);
+    assert.deepEqual(
+      linkedReferenceTable?.tableCellDeltas,
+      [[[{ insert: 'Reference', attributes: { bold: true } }]], [updatedReferenceCellDeltas]],
+      'read_doc returns native LinkedPage table-cell reference deltas',
+    );
     const emptyOverrideTableBlock = blocks.find(block => block.id === state.emptyOverrideTableBlockId);
     expectTruthy(emptyOverrideTableBlock, 'read_doc empty table delta override block');
     assert.deepEqual(emptyOverrideTableBlock.tableData, [['']], 'empty table delta overrides fallback text');
@@ -643,6 +866,7 @@ async function main() {
     expectEqual(markdown.markdown.includes('[GitLab](https://gitlab.com)'), true, 'export_doc_markdown link');
     expectEqual(markdown.markdown.includes('\\|'), true, 'export_doc_markdown escaped table pipe');
 
+    state.updatedDate = await readWorkspacePageUpdatedDate(state.workspaceId, state.docId, state.creatorId);
     fs.writeFileSync(STATE_OUTPUT_PATH, JSON.stringify(state, null, 2));
     console.log();
     console.log(`State written to: ${STATE_OUTPUT_PATH}`);

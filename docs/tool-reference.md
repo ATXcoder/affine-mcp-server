@@ -85,7 +85,7 @@ workspace or document links. For a custom route, keep the deployment base in
 | `create_folder` | Create a root or nested folder | Experimental |
 | `create_workspace_blueprint` | Create a simple workspace folder blueprint | Good for structured onboarding setups |
 | `rename_folder` | Rename a folder | Experimental |
-| `update_folder_icon` | Set or clear a folder's sidebar icon (emoji or named icon) | Experimental |
+| `update_folder_icon` | Set or clear a folder's sidebar icon (emoji, or named icon with optional color) | Experimental. See [Sidebar icons](#sidebar-icons) |
 | `get_folder_icon` | Read a folder's current sidebar icon | Experimental |
 | `delete_folder` | Delete a folder recursively | Experimental and destructive |
 | `move_organize_node` | Move a folder or link node | Experimental |
@@ -166,7 +166,7 @@ stored as one plain paragraph.
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `update_doc_title` | Rename a document in workspace metadata and in the page block | |
-| `update_doc_icon` | Set or clear a document's sidebar icon (emoji or named icon) | |
+| `update_doc_icon` | Set or clear a document's sidebar icon (emoji, or named icon with optional color) | See [Sidebar icons](#sidebar-icons) |
 | `get_doc_icon` | Read a document's current sidebar icon | |
 | `append_block` | Append canonical block types with validation and placement control | Inline-rich-text block content accepts a plain string or formatting-preserving delta array. Also supports media, embeds, database, and edgeless blocks. `frame`/`edgeless_text`/`note` accept `x`/`y`/`width`/`height`. `note` with `text` auto-creates a child paragraph. Bookmarks allow canonical web, mail, telephone, `affine://blob/<key>`, and `affine://doc/<id>` URLs; iframes require HTTP(S); provider embeds require HTTPS URLs on official hosts. URL validation does not make an outbound server fetch. Image and attachment `sourceId` values are exact opaque keys returned by `upload_blob`, including keys containing spaces or path separators. |
 | `update_block` | Partially update an existing text block without changing its id | `text` accepts a plain string or formatting-preserving delta array. Also supports todo checked state, list style, and same-flavour paragraph/heading/quote conversions. Cross-flavour conversions are rejected because AFFiNE replaces the block id. |
@@ -178,9 +178,18 @@ stored as one plain paragraph.
 | `append_markdown` | Append Markdown content to an existing document | |
 | `replace_doc_with_markdown` | Replace the main note content with Markdown | Destructive; requires `full` with the `destructive` group enabled. Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
 
+Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. If content is saved but the timestamp update cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
+
+New pages record the authenticated AFFiNE user's ID in the workspace's native
+`docProperties.createdBy` record, so **Created by** displays the creating account.
+This also applies to semantic pages, template instances (using the instantiating
+account), and workspace welcome pages. Existing creator values are preserved;
+editing an older page does not backfill or change its creator. HTTP/OAuth deployments
+using a shared AFFiNE account record that backend account as the creator.
+
 #### Document creation failures
 
-Document content and workspace metadata are persisted separately. Creation tools (`create_doc`, `create_doc_from_markdown`, `create_semantic_page`, and `instantiate_template_native`) reconcile failed writes using the same generated document ID and check existing metadata before retrying registration.
+Document content, workspace page registration, and native creator properties are persisted separately. Creation tools (`create_doc`, `create_doc_from_markdown`, `create_semantic_page`, and `instantiate_template_native`) reconcile failed writes using the same generated document ID and check existing metadata before retrying registration or creator writes. `metadataPersisted` covers both page registration and the creator record.
 
 If completion still cannot be confirmed, the tool returns `isError: true`, `ok: false`, the allocated `workspaceId` and `docId`, the failed `stage`, and `recoveryGuidance`. `contentPersisted` and `metadataPersisted` are `true`, `false`, or `null` when read-back was unavailable. `DOCUMENT_CREATE_PARTIAL` identifies persisted content with missing workspace metadata; `DOCUMENT_CREATE_UNCERTAIN` identifies an unconfirmed outcome. For Markdown or native-template materialization failures, `contentPersisted: null` means the requested content is unconfirmed even though the document shell may already exist. These responses set `retryable: false`: inspect the returned document ID and reconcile its metadata before issuing another creation request, which would allocate a different ID.
 
@@ -200,6 +209,12 @@ For inline-rich-text blocks, `append_block.text`, `update_block.text`, and `upda
 
 `read_doc` block rows and block snapshots returned by editing tools include both flattened `text` and formatting-preserving `deltas`; table rows additionally include the full `tableData` matrix and `tableCellDeltas`. Markdown export still reports and drops inline attributes it cannot represent; use `deltas` for lossless block-level read/modify/write flows.
 
+Inline page references use `{ "insert": " ", "attributes": { "reference": { "type": "LinkedPage", "pageId": "<docId>" } } }`: one ASCII space per reference, with its label resolved by AFFiNE. Block, table-cell, and database rich-text writes reject visible reference labels and missing page IDs before saving. Exact legacy zero-width-space reference markers are normalized to native spaces when written; existing stored documents remain readable.
+
+#### Sidebar icons
+
+`update_doc_icon` and `update_folder_icon` accept an emoji or a named icon such as `{ "type": "affine-icon", "name": "FlagPanel", "color": "#EB4C42" }`. `name` must match an `@blocksuite/icons` export without the `Icon` suffix (for example `FlagPanel` for `FlagPanelIcon`); names are not validated, and unknown names render as no icon in AFFiNE. `color` is optional and accepts any CSS color.
+
 ### Tags
 
 | Tool | Purpose | Notes |
@@ -213,11 +228,13 @@ For inline-rich-text blocks, `append_block.text`, `update_block.text`, and `upda
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `list_doc_properties` | List workspace custom-property definitions and a document's current values | WebSocket-backed; reads the `db$docProperties` / `db$docCustomPropertyInfo` sub-docs |
+| `list_doc_properties` | List workspace custom-property definitions and a document's current values | WebSocket-backed; reads the `db$<workspaceId>$docProperties` / `db$<workspaceId>$docCustomPropertyInfo` sub-docs |
 | `create_custom_property` | Create a workspace-wide custom property definition | Types: `text`, `number`, `checkbox`, `date`. Returns the `propertyId` |
 | `delete_custom_property` | Soft-delete a custom property definition by id or name | Destructive; existing values are hidden |
 | `set_doc_property` | Set a document's custom property value by property id or name | Value validated per type (`checkbox` boolean, `number`, `date` `YYYY-MM-DD`, `text`) |
 | `clear_doc_property` | Remove a custom property value from a document | |
+
+Custom properties use AFFiNE's workspace-scoped tables. To recover values written by versions before 3.8.4, call `list_doc_properties` with `includeLegacy: true`. Its separate `legacy` object contains the old definitions, decoded properties, and orphan values; the normal result remains native-only. This read never imports or modifies data, so cleared native values, deleted definitions, and creator metadata stay intact. To restore an old value in AFFiNE, use `create_custom_property` for its definition and `set_doc_property` with the returned new property ID and the recovered value. Existing native properties are not automatically overwritten.
 
 ### Markdown export
 
@@ -269,10 +286,12 @@ When the new block is a frame/note/edgeless_text on the canvas, `append_block` a
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `list_comments` | List comments on a document | |
-| `create_comment` | Create a comment on a document | |
-| `update_comment` | Update comment content | |
+| `create_comment` | Create a comment on a document | Plain text or a native AFFiNE `{ snapshot }` payload |
+| `update_comment` | Update comment content | Same content format as `create_comment` |
 | `delete_comment` | Delete a comment | Destructive |
 | `resolve_comment` | Resolve or unresolve a comment | |
+
+Plain strings and legacy `{ text: "..." }` comment objects are converted to BlockSuite snapshots so AFFiNE can render them. Native `{ snapshot, attachments?, mode?, preview? }` payloads retain their rich content. Malformed snapshot payloads are rejected before mutation.
 
 ## Version History
 

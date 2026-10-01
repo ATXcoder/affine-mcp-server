@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.5] - 2026-10-01
+
+### Fixed
+- Reject `update_doc_title` for a document that is not in the workspace instead of reporting it renamed.
+- Reject `list_doc_properties` and `clear_doc_property` for a document that is not in the workspace, as `set_doc_property` already does.
+
+### Changed
+- Pin GitHub Actions dependencies to immutable commits.
+- Update locked `fast-uri` to 3.1.8 and `ip-address` to 10.7.2 to resolve moderate dependency advisories.
+
+## [3.8.4] - 2026-09-29
+
+### Fixed
+- Record the authenticated AFFiNE user as the creator of new pages, including welcome pages and template instances, without replacing an existing creator. Reconcile incomplete creator writes before reporting document creation success.
+- Read and write custom properties in AFFiNE's workspace-scoped documents so definitions and values appear in the native UI and UI edits are visible to MCP. Keep older unscoped data accessible through the opt-in `includeLegacy` recovery result without overwriting native state.
+- Convert plain and legacy text comments to native BlockSuite snapshots; preserve rich snapshots and reject malformed payloads before writing.
+- Save a Markdown note and its children in one document update so a rejected child cannot leave an empty note behind.
+- Report a non-retryable partial-write error when saved page content has no workspace metadata entry to update.
+
+### Tests
+- Verify all custom-property types in Chrome, including UI-to-MCP edits, clearing values, and deleting definitions; verify comment creation, update, and deletion in the native sidebar.
+- Add supporting-tool integration coverage to the release E2E suite and regressions for malformed comments, orphan-page metadata, and rejected Markdown children.
+
+## [3.8.3] - 2026-09-28
+
+### Changed
+- Include occupied, established, and initializing session counts in HTTP capacity errors while preserving HTTP 503 and JSON-RPC error -32002.
+- Document HTTP session limits and defaults in the README, with session termination and capacity troubleshooting guidance.
+
+### Fixed
+- Keep workspace page modification timestamps current after MCP document creation and editing so AFFiNE's updated-date lists and sorting reflect those writes.
+- Validate inline LinkedPage reference writes across document blocks, table cells, and database cells, and use AFFiNE's native reference marker for generated links.
+- Read named sidebar icons set in the AFFiNE UI: `get_doc_icon` and `get_folder_icon` accept AFFiNE's `{ type: "affine-icon", name, color }` shape instead of failing output validation.
+- Write named icons with AFFiNE's `affine-icon` type and keep the optional CSS `color` in `update_doc_icon` and `update_folder_icon`, so they render in AFFiNE. `type: "icon"` is still accepted as input and still readable when stored by earlier versions.
+
+### Tests
+- Disable rate limiting in disposable AFFiNE test instances so repeated authentication does not interrupt E2E coverage.
+- Add offline coverage for named-icon input normalization and output validation, and a colored-icon round trip to the live icon test.
+
+## [3.8.2] - 2026-09-22
+
+### Fixed
+- Keep MCP-created page documents compatible with AFFiNE version history restore by preserving the page document's canonical top-level structure.
+- Preserve canonical workspace titles and tags when collection rules evaluate documents, preventing stale legacy metadata from overriding titles or restoring removed tags.
+
+### Tests
+- Add browser and integration regression coverage for history restoration and collection-rule matching with legacy document metadata.
+
 ## [3.8.1] - 2026-09-21
 
 ### Fixed
@@ -839,6 +887,10 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.8.5]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.8.5
+[3.8.4]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.4
+[3.8.3]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.3
+[3.8.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.2
 [3.8.1]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.1
 [3.8.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.0
 [3.7.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.7.0
@@ -881,4 +933,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.1...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.5...HEAD

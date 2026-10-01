@@ -16,6 +16,7 @@ import {
   writeTableColumnWidth,
 } from "../dist/tools/docs.js";
 import { registerHistoryTools } from "../dist/tools/history.js";
+import { registerIconTools } from "../dist/tools/icons.js";
 import { registerNotificationTools } from "../dist/tools/notifications.js";
 import { registerUserCRUDTools } from "../dist/tools/userCRUD.js";
 import { registerWorkspaceTools } from "../dist/tools/workspaces.js";
@@ -27,6 +28,7 @@ import {
   BoundedTreeDepth,
   requireMatchingConfirmation,
 } from "../dist/util/inputSchemas.js";
+import { normalizeIconInput } from "../dist/util/explorerIcon.js";
 
 class ToolRegistry {
   tools = new Map();
@@ -90,6 +92,7 @@ registerBlobTools(registry, gql, "http://127.0.0.1:1");
 registerCommentTools(registry, gql, {});
 registerDocTools(registry, gql, {});
 registerHistoryTools(registry, gql, {});
+registerIconTools(registry, gql, {});
 registerNotificationTools(registry, gql);
 registerUserCRUDTools(registry, gql);
 registerWorkspaceTools(registry, gql);
@@ -394,4 +397,68 @@ assert.equal(parseResult(await cleanupBlobs({
 })).success, true);
 assert.equal(requestCount, 3, "valid confirmations should reach AFFiNE exactly once each");
 
+// Named icons must keep `color` through the input schema and be written with
+// AFFiNE's `affine-icon` discriminator (its renderer ignores `icon`).
+for (const toolName of ["update_doc_icon", "update_folder_icon"]) {
+  const iconField = registry.tools.get(toolName)?.definition?.inputSchema?.icon;
+  assert.ok(iconField, `${toolName} must declare an icon input`);
+  assert.deepEqual(
+    iconField.parse({ type: "affine-icon", name: "FlagPanel", color: "#EB4C42" }),
+    { type: "affine-icon", name: "FlagPanel", color: "#EB4C42" },
+    `${toolName} must keep icon color`,
+  );
+  assert.equal(iconField.safeParse({ type: "blob", blob: {} }).success, false);
+}
+assert.deepEqual(
+  normalizeIconInput({ type: "icon", name: " FlagPanel ", color: " #EB4C42 " }),
+  { type: "affine-icon", name: "FlagPanel", color: "#EB4C42" },
+);
+assert.deepEqual(normalizeIconInput({ type: "affine-icon", name: "FlagPanel" }), { type: "affine-icon", name: "FlagPanel" });
+assert.deepEqual(normalizeIconInput({ type: "affine-icon", name: "FlagPanel", color: "  " }), { type: "affine-icon", name: "FlagPanel" });
+assert.deepEqual(normalizeIconInput("🧪"), { type: "emoji", unicode: "🧪" });
+assert.equal(normalizeIconInput(null), null);
+assert.throws(() => normalizeIconInput({ type: "affine-icon", name: "  " }), /non-empty `name`/);
+
 console.log("Input contract tests passed");
+
+// Comment API acknowledgements alone do not establish renderable editor content.
+{
+  const calls = [];
+  const comments = new ToolRegistry();
+  registerCommentTools(comments, {
+    async request(query, variables) {
+      calls.push(variables.input);
+      return query.includes("CreateComment")
+        ? { createComment: { id: "comment-1", content: variables.input.content } }
+        : { updateComment: true };
+    },
+  }, { workspaceId: "workspace-1" });
+  const create = comments.tools.get("create_comment").handler;
+  const update = comments.tools.get("update_comment").handler;
+  await create({ docId: "doc-1", content: "Hello\nworld" });
+  const content = calls[0].content;
+  assert.equal(content.snapshot.type, "page");
+  const paragraph = content.snapshot.blocks.children[0].children[0];
+  assert.equal(paragraph.flavour, "affine:paragraph");
+  assert.deepEqual(paragraph.props.text, {
+    "$blocksuite:internal:text$": true, delta: [{ insert: "Hello\nworld" }],
+  });
+  assert.equal(content.text, undefined);
+  await update({ id: "comment-1", content: { text: "Updated", preview: "target", attachments: [] } });
+  assert.equal(calls[1].content.preview, "target");
+  assert.deepEqual(calls[1].content.attachments, []);
+  assert.equal(calls[1].content.snapshot.blocks.children[0].children[0].props.text.delta[0].insert, "Updated");
+  const rich = { ...content, attachments: [{ id: "attachment-1" }], mode: "page" };
+  paragraph.props.text.delta[0].attributes = { bold: true };
+  await create({ docId: "doc-1", content: rich });
+  assert.deepEqual(calls[2].content, rich, "native snapshot attributes and metadata must survive unchanged");
+  const nonPageRoot = { snapshot: {
+    ...content.snapshot, blocks: { ...content.snapshot.blocks, flavour: "affine:paragraph" },
+  } };
+  for (const invalid of [[], {}, { text: 1 }, { snapshot: {} }, { snapshot: { ...content.snapshot, blocks: {} } }, nonPageRoot]) {
+    await assert.rejects(create({ docId: "doc-1", content: invalid }));
+    const result = await update({ id: "comment-1", content: invalid });
+    assert.equal(result.isError, true);
+  }
+  assert.equal(calls.length, 3, "malformed content must never reach a GraphQL mutation");
+}

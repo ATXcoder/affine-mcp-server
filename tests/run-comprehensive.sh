@@ -146,7 +146,7 @@ start_docker_stack_with_retry() {
 }
 
 export AFFINE_EMAIL="$AFFINE_ADMIN_EMAIL"
-export AFFINE_PASSWORD="$AFFINE_ADMIN_PASSWORD"
+export AFFINE_PASSWORD="${AFFINE_ADMIN_PASSWORD}"
 export AFFINE_LOGIN_AT_START="${AFFINE_LOGIN_AT_START:-sync}"
 
 compose down -v --remove-orphans 2>/dev/null || true
@@ -169,7 +169,7 @@ wait_for_auth_ready
 
 echo ""
 echo "=== Configuring isolated AFFiNE test instance ==="
-node "$SCRIPT_DIR/configure-comprehensive-instance.mjs"
+node "$SCRIPT_DIR/configure-test-instance.mjs"
 
 echo ""
 echo "=== Running focused comprehensive suite ==="

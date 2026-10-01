@@ -1,5 +1,88 @@
 # Release Notes
 
+## Version 3.8.5 (2026-10-01)
+
+### Highlights
+- Reject missing documents before reporting a successful rename or accessing their properties.
+
+### What Changed
+- Make `update_doc_title` check workspace metadata before writing, matching the existing document tools (#384, #385).
+- Make `list_doc_properties` and `clear_doc_property` check document membership, matching `set_doc_property` (#386, #387).
+- Add regression tests for all three missing-document requests and retain both fixes after integration.
+- Pin GitHub Actions dependencies to immutable commits.
+- Update locked `fast-uri` to 3.1.8 and `ip-address` to 10.7.2 to resolve moderate dependency advisories.
+
+### Compatibility
+- Requests for documents absent from the workspace now return an error instead of `updated: true`, unset properties, or `cleared: false`. Existing documents keep their current behavior.
+- The canonical MCP surface remains at 106 tools. No configuration or data migration is required.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.8.5`, then restart the MCP server.
+
+### Thanks
+- Thanks to @ConnorMoss02 for reporting both issues and contributing the focused fixes.
+
+## Version 3.8.4 (2026-09-29)
+
+### Highlights
+- Show the authenticated creator for new MCP-created pages in AFFiNE.
+- Keep custom properties and comments visible and editable in the native AFFiNE UI.
+- Prevent empty Markdown notes after rejected content and report missing page metadata explicitly.
+
+### What Changed
+- Record creators for pages, workspace welcome pages, and template instances without overwriting existing attribution. Reconcile incomplete creator writes before returning success.
+- Store custom-property definitions and values in AFFiNE's workspace-scoped documents; preserve the creator stored alongside property values.
+- Convert strings and legacy `{ text: string }` comments into native BlockSuite snapshots. Preserve rich snapshot content and reject malformed snapshots, including non-page roots, before mutation.
+- Save a Markdown note and its children in one page update, so invalid child content cannot leave an empty note behind.
+- Return non-retryable `workspace_page_updated_date_failed` when page content was saved but the workspace page metadata entry is missing.
+- Add native UI coverage for all four property types and comment creation, editing, and deletion, plus integration coverage for supporting tools and partial-write regressions.
+
+### Compatibility
+- The canonical MCP surface remains at 106 tools. No configuration migration is required.
+- Existing pages are not backfilled with creator attribution. Existing creator values are preserved.
+- Older custom-property data is recoverable through `list_doc_properties` with `includeLegacy: true`, in a separate `legacy` result. Nothing is automatically imported or overwritten. Recreate affected definitions with `create_custom_property`, then use the new property IDs with `set_doc_property` to restore recovered values.
+- Legacy comments already stored without a native snapshot are not rewritten automatically. Update their content through `update_comment` to make them renderable.
+- After a partial-write error, inspect the existing document and repair its metadata instead of replaying the content edit.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.8.4`, then restart the MCP server.
+
+## Version 3.8.3 (2026-09-28)
+
+### Highlights
+- Keep AFFiNE's Updated lists and sorting current after MCP page creation and editing.
+- Write native page-reference chips without accepting malformed visible-label deltas.
+- Read and write named, colored sidebar icons in AFFiNE's native format.
+
+### What Changed
+- Initialize workspace page modification dates on creation and advance them after acknowledged page-content writes. Internal workspace subdocuments retain their existing write behavior.
+- Validate LinkedPage deltas across blocks, table cells, and database cells. Generated links use AFFiNE's ASCII-space marker, and legacy zero-width markers normalize when written.
+- Preserve reference-only Markdown content, references at text boundaries, and consecutive references during import and export.
+- Accept AFFiNE's `affine-icon` shape and optional CSS color for document and folder icons while keeping legacy `icon` inputs readable.
+- Include occupied, established, and initializing HTTP session counts in capacity errors, with documented session limits and recovery guidance.
+- Update development dependencies `tsx` to 4.23.15 and Node.js type definitions to 24.13.6.
+
+### Compatibility
+- The canonical MCP surface remains at 106 tools. Existing tool names and required inputs remain available.
+- Malformed LinkedPage deltas with visible labels or missing page IDs now fail before saving. Existing stored documents remain readable; no bulk data migration is performed.
+- A saved page whose modification timestamp cannot be confirmed reports non-retryable `workspace_page_updated_date_failed`. Inspect the existing document and repair metadata instead of repeating the content edit.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.8.3`, then restart the MCP server. No configuration migration is required.
+
+## Version 3.8.2 (2026-09-22)
+
+### Highlights
+- Restore AFFiNE version history for documents created or modified by `affine-mcp-server`.
+
+### What Changed
+- Keep newly created page documents limited to AFFiNE's canonical `blocks` shared type so version-history restore can apply older versions.
+- Read legacy page metadata without recreating the non-canonical top-level map.
+- Use workspace title and tags as the canonical source for collection rules, preventing stale legacy metadata from overriding title matches or resurrecting removed tags.
+
+### Compatibility
+- Existing tools and required inputs and output contracts remain unchanged; the canonical MCP surface remains at 106 tools.
+- Existing documents remain readable, and no configuration migration is required.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.8.2`, then restart the MCP server.
+
 ## Version 3.8.1 (2026-09-21)
 
 ### Highlights

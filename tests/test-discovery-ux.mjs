@@ -13,6 +13,7 @@ process.env.AFFINE_WS_ACK_TIMEOUT_MS = "1000";
 
 const { registerDocTools } = await import("../dist/tools/docs.js");
 const { registerWorkspaceTools } = await import("../dist/tools/workspaces.js");
+const { registerPropertyTools } = await import("../dist/tools/properties.js");
 
 class ToolRegistry {
   tools = new Map();
@@ -108,6 +109,7 @@ async function createRealtimeFixture({ workspaceId = "workspace-ux", rootSnapsho
   };
   const registry = new ToolRegistry();
   registerDocTools(registry, gql, { workspaceId });
+  registerPropertyTools(registry, gql, { workspaceId });
 
   return {
     registry,
@@ -163,6 +165,45 @@ async function testMissingAndEmptyWorkspaceRoots() {
   }
 }
 
+async function testUpdateDocTitleRejectsMissingDoc() {
+  const fixture = await createRealtimeFixture({
+    rootSnapshot: encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]),
+  });
+  try {
+    await assert.rejects(
+      fixture.registry.tools.get("update_doc_title").handler({
+        workspaceId: "workspace-ux",
+        docId: "ghost",
+        title: "Renamed",
+      }),
+      /Document ghost is not present in workspace workspace-ux/,
+      "update_doc_title must not report success for a doc that does not exist",
+    );
+  } finally {
+    await fixture.close();
+  }
+}
+
+async function testDocPropertyToolsRejectMissingDoc() {
+  const fixture = await createRealtimeFixture({
+    rootSnapshot: encodeWorkspaceRoot([{ id: "doc-1", title: "Task" }]),
+  });
+  try {
+    for (const [name, args] of [
+      ["list_doc_properties", { workspaceId: "workspace-ux", docId: "ghost" }],
+      ["clear_doc_property", { workspaceId: "workspace-ux", docId: "ghost", property: "Status" }],
+    ]) {
+      await assert.rejects(
+        fixture.registry.tools.get(name).handler(args),
+        /docId ghost is not present in workspace workspace-ux/,
+        `${name} must reject a doc that does not exist`,
+      );
+    }
+  } finally {
+    await fixture.close();
+  }
+}
+
 async function testSearchContinuationAndBrowserUrls() {
   const pages = Array.from({ length: 205 }, (_, index) => ({
     id: `doc-${String(index).padStart(3, "0")}`,
@@ -198,7 +239,10 @@ async function testSearchContinuationAndBrowserUrls() {
 }
 
 async function testPartialWorkspaceRecoveryReceipt() {
+  let createRequests = 0;
+  let currentUser = null;
   const server = createServer(async (_request, response) => {
+    createRequests += 1;
     for await (const _chunk of _request) {
       // Consume the multipart request before returning the GraphQL result.
     }
@@ -225,6 +269,10 @@ async function testPartialWorkspaceRecoveryReceipt() {
   const gql = {
     endpoint,
     baseUrl: "https://affine.example/custom-base",
+    async request(query) {
+      assert.match(query, /currentUser/);
+      return { currentUser };
+    },
     async getConnectionAuth() {
       return { endpoint, cookie: "", bearer: "", headers: {} };
     },
@@ -233,6 +281,10 @@ async function testPartialWorkspaceRecoveryReceipt() {
   registerWorkspaceTools(registry, gql);
 
   try {
+    const unidentified = await registry.tools.get("create_workspace").handler({ name: "No identity" });
+    assert.equal(unidentified.isError, true, "missing creator identity must fail before workspace creation");
+    assert.equal(createRequests, 0, "identity lookup failure must not create a workspace");
+    currentUser = { id: "workspace-creator" };
     const result = await registry.tools.get("create_workspace").handler({ name: "UX recovery" });
     const receipt = parseResult(result);
     assert.equal(result.isError, undefined, "partial workspace creation must remain an OK receipt");
@@ -254,6 +306,8 @@ async function testPartialWorkspaceRecoveryReceipt() {
 }
 
 await testMissingAndEmptyWorkspaceRoots();
+await testUpdateDocTitleRejectsMissingDoc();
+await testDocPropertyToolsRejectMissingDoc();
 await testSearchContinuationAndBrowserUrls();
 await testPartialWorkspaceRecoveryReceipt();
 console.log("Discovery UX tests passed");
