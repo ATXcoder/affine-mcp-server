@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 - Extend the authoring-profile filtering test to assert the folder tools are exposed and folder deletion stays hidden.
+- Add `test-authoring-folders.mjs` (comprehensive suite, `npm run test:authoring-folders`): a live check that the `authoring` profile can create, rename, nest, list and link folders and file docs into them, and cannot delete folders.
 
 ## [3.8.5] - 2026-10-01
 

@@ -87,6 +87,7 @@
     "test:http-security": "tsx tests/test-http-security.mjs",
     "test:http-runtime": "tsx tests/test-http-runtime-safety.mjs",
     "test:oauth-http": "node tests/test-oauth-http.mjs",
+    "test:authoring-folders": "tsx tests/test-authoring-folders.mjs",
     "test:organize": "node tests/test-organize-tools.mjs",
     "test:create-doc-folder-placement": "node tests/test-create-doc-folder-placement.mjs",
     "test:supporting-tools": "node tests/test-supporting-tools.mjs",

@@ -2,6 +2,7 @@
   "version": 1,
   "classifications": {
     "test-auth-session.mjs": "fast",
+    "test-authoring-folders.mjs": "integration",
     "test-blob-upload-contract.mjs": "fast",
     "test-block-editing.mjs": "integration",
     "test-canvas-tool-map-demo.mjs": "integration",
@@ -173,6 +174,7 @@
       "test-database-cells.mjs",
       "test-native-template-instantiation.mjs",
       "test-organize-tools.mjs",
+      "test-authoring-folders.mjs",
       "test-supporting-tools.mjs"
     ],
     "manual": [
