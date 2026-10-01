@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Fork: expose the sidebar folder tools (`create_folder`, `rename_folder`, `list_organize_nodes`, `move_organize_node`, `add_organize_link`, `create_workspace_blueprint`, `get_folder_icon`, `update_folder_icon`) in the `authoring` profile by removing their `experimental` group tag. `delete_folder` and `delete_organize_link` remain destructive and are still excluded from `authoring`. The `core` profile is unchanged.
+
+### Tests
+- Extend the authoring-profile filtering test to assert the folder tools are exposed and folder deletion stays hidden.
+
 ## [3.8.5] - 2026-10-01
 
 ### Fixed

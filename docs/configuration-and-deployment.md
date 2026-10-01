@@ -438,7 +438,7 @@ Available profiles:
 - `full`: expose the complete public tool surface; this is the default outside OAuth mode
 - `read_only`: expose discovery, reading, export, fidelity, and inspection tools, plus `sign_in`
 - `core`: expose the compact everyday surface for workspace/doc discovery, basic document authoring, tags, and database row/schema edits; omits admin tools, cleanup tools, experimental organize tools, and destructive tools
-- `authoring`: expose non-destructive creation and editing tools, including semantic pages, native templates, database composition, and edgeless canvas authoring; omits admin, cleanup, destructive, and experimental organize tools
+- `authoring`: expose non-destructive creation and editing tools, including semantic pages, native templates, database composition, edgeless canvas authoring, and sidebar folder management (create, rename, list, move, link docs, folder icons); omits admin, cleanup, and destructive tools, so `delete_folder` and `delete_organize_link` stay unavailable
 
 `replace_doc_with_markdown` removes the existing main-note content and is classified as destructive. It is available in `full`, but excluded from `core`, `authoring`, and deployments with `AFFINE_DISABLED_GROUPS=destructive`. Use `append_markdown` or `update_block` for incremental edits in those profiles.
 

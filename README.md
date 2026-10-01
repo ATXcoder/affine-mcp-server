@@ -257,7 +257,7 @@ Advertised input and output schemas omit the SDK-generated draft-07 `$schema` ma
 Domains:
 
 - Workspace: create, inspect, update, delete, and traverse workspaces
-- Organization: collections, collection-rule sync, workspace blueprints, and experimental organize or folder helpers
+- Organization: collections, collection-rule sync, workspace blueprints, and sidebar folder management (create, rename, list, move, link docs, icons; folder deletion is destructive and excluded from the `authoring` profile)
 - Documents: search, read, create, publish, move, tag, custom properties, import/export, semantic composition, template inspection and native instantiation, capability and fidelity reporting, and block-level mutation
 - Databases: create columns, add rows, update rows, inspect schema, and compose database structures from intent
 - Comments: list, create, update, delete, and resolve
