@@ -498,7 +498,6 @@ type DatabaseIntentPreset = {
 const DATABASE_COLUMN_TYPE_VALUES = ["title", "rich-text", "select", "multi-select", "number", "checkbox", "link", "date"] as const;
 
 const MARKDOWN_IMPORT_KNOWN_LOSSES = [
-  "Nested markdown lists are flattened during import.",
   "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
   "Display math inside lists or quotes is imported as inline math.",
   "HTML blocks are imported as plain paragraph text.",
