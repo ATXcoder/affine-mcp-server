@@ -534,7 +534,6 @@ function parseList(
       let itemText = "";
       let itemDeltas: TextDelta[] = [];
       const nestedOperations: MarkdownOperation[] = [];
-      let hasNestedList = false;
 
       let cursor = i + 1;
       while (cursor < close) {
@@ -563,7 +562,6 @@ function parseList(
             addWarning(state, "Malformed nested list was ignored.");
             break;
           }
-          hasNestedList = true;
           const nestedStyle = current.type === "ordered_list_open" ? "numbered" : "bulleted";
           nestedOperations.push(...parseList(tokens, cursor + 1, nestedClose, nestedStyle, state, depth + 1));
           cursor = nestedClose + 1;
@@ -616,23 +614,17 @@ function parseList(
         style,
         ...(style === "todo" ? { checked: Boolean(checked) } : {}),
         deltas: itemDeltas,
+        ...(depth > 0 ? { depth } : {}),
       });
 
-      if (hasNestedList) {
-        state.unsupportedCount += 1;
-        addWarning(state, "Nested markdown lists were flattened to sequential list items.");
-      }
+      // Nested items follow their parent and carry a deeper `depth`; the importer
+      // places them as children of the parent list block, as AFFiNE stores indented lists.
       operations.push(...nestedOperations);
       i = close + 1;
       continue;
     }
 
     i += 1;
-  }
-
-  if (depth > 0 && operations.length > 0) {
-    state.unsupportedCount += 1;
-    addWarning(state, "List nesting depth was reduced during markdown import.");
   }
 
   return operations;

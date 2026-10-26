@@ -45,6 +45,7 @@ import {
 } from "../ws.js";
 import * as Y from "yjs";
 import { parseMarkdownToOperations } from "../markdown/parse.js";
+import { createMarkdownListNesting } from "../markdown/listNesting.js";
 import { renderBlocksToMarkdown } from "../markdown/render.js";
 import {
   AFFINE_LINKED_PAGE_REFERENCE_NODE,
@@ -4266,6 +4267,7 @@ export function registerDocTools(
     let removedCount = 0;
     let removedEmptyParagraphCount = 0;
     const blockIds: string[] = [];
+    const listNesting = createMarkdownListNesting();
 
     if (replaceExisting) {
       replaceParentId = ensureNoteBlock(blocks);
@@ -4295,8 +4297,11 @@ export function registerDocTools(
     }
 
     for (const [operationIndex, operation] of parsed.operations.entries()) {
-      const placement =
-        lastInsertedBlockId
+      const listParent = listNesting.parentFor(operation);
+      // Top-level blocks follow the last top-level block, never a nested list item.
+      const placement = listParent
+        ? { parentId: listParent.parentId }
+        : lastInsertedBlockId
           ? { afterBlockId: lastInsertedBlockId }
           : replaceParentId
             ? { parentId: replaceParentId }
@@ -4328,9 +4333,12 @@ export function registerDocTools(
           databaseRows.push(block);
         }
         blockIds.push(blockId);
-        lastInsertedBlockId = blockId;
-        if (!replaceParentId) {
-          anchorPlacement = { afterBlockId: blockId };
+        listNesting.inserted(operation, blockId, listParent?.depth ?? 0);
+        if (!listParent) {
+          lastInsertedBlockId = blockId;
+          if (!replaceParentId) {
+            anchorPlacement = { afterBlockId: blockId };
+          }
         }
       } catch (error) {
         handleMarkdownOperationFailure(error, {
@@ -4399,8 +4407,10 @@ export function registerDocTools(
     const validationDocId = "markdown-preflight";
     const skeleton = createDocSkeleton("Markdown preflight");
     let placement: AppendPlacement = { parentId: skeleton.noteId };
+    const listNesting = createMarkdownListNesting();
 
     for (const [operationIndex, operation] of operations.entries()) {
+      const listParent = listNesting.parentFor(operation);
       try {
         const normalized = normalizeAppendBlockInput(
           markdownOperationToAppendInput(
@@ -4408,7 +4418,7 @@ export function registerDocTools(
             validationDocId,
             workspaceId,
             strict,
-            placement,
+            listParent ? { parentId: listParent.parentId } : placement,
           ),
         );
         const context = resolveInsertContext(skeleton.blocks, normalized);
@@ -4422,7 +4432,8 @@ export function registerDocTools(
         } else {
           context.children.insert(context.insertIndex, [blockId]);
         }
-        placement = { afterBlockId: blockId };
+        listNesting.inserted(operation, blockId, listParent?.depth ?? 0);
+        if (!listParent) placement = { afterBlockId: blockId };
       } catch (error) {
         handleMarkdownOperationFailure(error, {
           strict,

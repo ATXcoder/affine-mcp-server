@@ -129,6 +129,26 @@ function listBlockDeltas(blocks) {
   return deltas;
 }
 
+/** Text of the list block whose children include the list item containing `text`, or null. */
+function listParentText(blocks, text) {
+  let childId = null;
+  for (const [id, block] of blocks) {
+    if (!(block instanceof Y.Map) || block.get("sys:flavour") !== "affine:list") continue;
+    const value = block.get("prop:text");
+    if (value instanceof Y.Text && value.toString().includes(text)) childId = id;
+  }
+  if (!childId) return null;
+  for (const [, block] of blocks) {
+    if (!(block instanceof Y.Map) || block.get("sys:flavour") !== "affine:list") continue;
+    const children = block.get("sys:children");
+    if (children instanceof Y.Array && children.toArray().includes(childId)) {
+      const value = block.get("prop:text");
+      return value instanceof Y.Text ? value.toString() : "";
+    }
+  }
+  return null;
+}
+
 function tableCellDeltas(tableBlock) {
   const result = [];
   for (const [key, value] of tableBlock) {
@@ -349,6 +369,7 @@ async function main() {
     const createdListDeltas = listBlockDeltas(createdBlocks);
     expect(createdListDeltas.some(delta => hasBoldRun(delta, "Top level")), "top-level list item did not preserve bold");
     expect(createdListDeltas.some(delta => hasBoldRun(delta, "Nested level")), "nested list item did not preserve bold");
+    expect(listParentText(createdBlocks, "Nested level")?.includes("Top level"), "nested list item was not stored as a child of its parent item");
 
     const createdTable = findBlock(createdBlocks, (_, block) => block.get("sys:flavour") === "affine:table");
     expect(createdTable, "table block not found after create_doc_from_markdown");
@@ -403,6 +424,7 @@ async function main() {
     const replacedListDeltas = listBlockDeltas(replacedBlocks);
     expect(replacedListDeltas.some(delta => hasBoldRun(delta, "Top level")), "replace_doc_with_markdown top-level list item lost bold");
     expect(replacedListDeltas.some(delta => hasBoldRun(delta, "Nested level")), "replace_doc_with_markdown nested list item lost bold");
+    expect(listParentText(replacedBlocks, "Nested level")?.includes("Top level"), "replace_doc_with_markdown did not nest the list item under its parent");
 
     const replacedTable = findBlock(replacedBlocks, (_, block) => block.get("sys:flavour") === "affine:table");
     expect(replacedTable, "table block not found after replace_doc_with_markdown");

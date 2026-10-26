@@ -43,6 +43,8 @@ export type MarkdownOperation =
       style: MarkdownListStyle;
       checked?: boolean;
       deltas?: TextDelta[];
+      /** Nesting level: omitted or 0 for a top-level item, 1 for its children, and so on. */
+      depth?: number;
     }
   | {
       type: "code";

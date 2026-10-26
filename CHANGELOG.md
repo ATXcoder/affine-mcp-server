@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fork: Markdown import (`create_doc_from_markdown`, `append_markdown`, `replace_doc_with_markdown`) keeps nested lists nested. Indented items become children of their parent list block, as AFFiNE stores them, instead of being flattened into sequential items with "Nested markdown lists were flattened" and "List nesting depth was reduced" warnings. Top-level blocks after a nested list stay at the top level.
+- Fork: Markdown export indents items nested under a numbered item by 3 spaces (the CommonMark content column) instead of 2, so they re-import as nested rather than as a separate list.
+
 ### Changed
 - Fork: expose the sidebar folder tools (`create_folder`, `rename_folder`, `list_organize_nodes`, `move_organize_node`, `add_organize_link`, `create_workspace_blueprint`, `get_folder_icon`, `update_folder_icon`) in the `authoring` profile by removing their `experimental` group tag. `delete_folder` and `delete_organize_link` remain destructive and are still excluded from `authoring`. The `core` profile is unchanged.
 
 ### Tests
 - Extend the authoring-profile filtering test to assert the folder tools are exposed and folder deletion stays hidden.
 - Add `test-authoring-folders.mjs` (comprehensive suite, `npm run test:authoring-folders`): a live check that the `authoring` profile can create, rename, nest, list and link folders and file docs into them, and cannot delete folders.
+- Add `test-markdown-nested-lists.mjs` (fast suite): parser depths, nesting placement (including a skipped parent and a paragraph after a nested list), and export/import round trips for bulleted, numbered, mixed and task lists.
+- `test-markdown-rich-text-import.mjs` (live) now checks that a nested item is stored as a child of its parent list block after create and replace.
 
 ## [3.10.2] - 2026-10-26
 

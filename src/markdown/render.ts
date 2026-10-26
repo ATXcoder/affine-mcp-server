@@ -417,7 +417,8 @@ function childList(block: MarkdownRenderableBlock): string[] {
 
 function renderBlock(
   blockId: string,
-  listDepth: number,
+  // Spaces before a list marker at this level; grows by each parent marker's width.
+  listIndent: number,
   state: RenderState,
   container?: "callout" | "quote" | "list",
 ): RenderChunk {
@@ -462,7 +463,7 @@ function renderBlock(
 
       const childContainer = container === "callout" || type !== "quote" ? container : "quote";
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, childContainer);
+        const child = renderBlock(childId, listIndent, state, childContainer);
         if (child.lines.length > 0) {
           lines.push(...child.lines);
         }
@@ -472,7 +473,7 @@ function renderBlock(
     }
 
     case "affine:list": {
-      const indent = "  ".repeat(Math.max(0, listDepth));
+      const indent = " ".repeat(Math.max(0, listIndent));
       const style = type === "numbered" ? "numbered" : type === "todo" ? "todo" : "bulleted";
       const marker =
         style === "numbered"
@@ -486,8 +487,10 @@ function renderBlock(
 
       for (const childId of children) {
         const child = state.blocksById.get(childId);
-        const nextDepth = child?.flavour === "affine:list" ? listDepth + 1 : listDepth;
-        const rendered = renderBlock(childId, nextDepth, state, container === "callout" ? container : "list");
+        // CommonMark nests a child only when it is indented to the parent's content column:
+        // 3 spaces under "1. ", 2 under "- " (task items' "[ ]" is part of the content).
+        const nextIndent = child?.flavour === "affine:list" ? listIndent + (style === "numbered" ? 3 : 2) : listIndent;
+        const rendered = renderBlock(childId, nextIndent, state, container === "callout" ? container : "list");
         if (rendered.lines.length > 0) {
           lines.push(...rendered.lines);
         }
@@ -596,7 +599,7 @@ function renderBlock(
     case "affine:callout": {
       const contentLines: string[] = [];
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, "callout");
+        const child = renderBlock(childId, listIndent, state, "callout");
         if (child.lines.length > 0) {
           if (contentLines.length > 0 && !child.isList) {
             contentLines.push("");
@@ -618,7 +621,7 @@ function renderBlock(
     case "affine:surface": {
       const chunks: string[] = [];
       for (const childId of children) {
-        const child = renderBlock(childId, listDepth, state, container);
+        const child = renderBlock(childId, listIndent, state, container);
         if (child.lines.length > 0) {
           if (chunks.length > 0 && !child.isList) {
             chunks.push("");
