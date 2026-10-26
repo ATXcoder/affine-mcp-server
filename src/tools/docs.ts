@@ -499,6 +499,7 @@ const DATABASE_COLUMN_TYPE_VALUES = ["title", "rich-text", "select", "multi-sele
 const MARKDOWN_IMPORT_KNOWN_LOSSES = [
   "Nested markdown lists are flattened during import.",
   "Markdown images are converted into bookmark blocks unless blobs are uploaded separately.",
+  "Display math inside lists or quotes is imported as inline math.",
   "HTML blocks are imported as plain paragraph text.",
   "Blank lines delimit Markdown blocks and do not create spacer paragraph blocks.",
   "CommonMark parsing normalizes Markdown syntax and surrounding whitespace, including leading whitespace in list-item content.",
@@ -519,6 +520,7 @@ const MARKDOWN_EXPORT_SUPPORTED_FLAVOURS = new Set<string>([
   "affine:image",
   "affine:table",
   "affine:callout",
+  "affine:latex",
   "affine:note",
   "affine:page",
   "affine:surface",
@@ -852,6 +854,13 @@ export async function deleteDocFromWorkspace(
   const contentSnapshot = await loadDoc(socket, workspaceId, docId);
   const metadataExisted = metadataIndex >= 0;
   const contentExisted = typeof contentSnapshot.missing === "string";
+  if (!contentExisted && contentSnapshot.notFound !== true) {
+    throw new ToolFailure(
+      `Document ${docId} did not return content or an explicit DOC_NOT_FOUND response. No deletion was attempted.`,
+      "doc_content_state_unconfirmed",
+      "Check AFFiNE connectivity and read the document before requesting deletion again.",
+    );
+  }
 
   if (!metadataExisted && !contentExisted) {
     return receipt("doc.delete", {
@@ -917,17 +926,20 @@ export async function deleteDocFromWorkspace(
   try {
     const deletion = await wsDeleteDoc(socket, workspaceId, docId);
     return receipt("doc.delete", {
-      status: "deleted",
+      status: deletion.verifiedAbsent ? "deleted" : "partial",
       workspaceId,
       docId,
-      deleted: true,
+      deleted: deletion.verifiedAbsent,
       alreadyAbsent: false,
       metadataExisted,
       metadataRemoved,
       contentExisted: true,
-      contentDeleted: true,
+      contentDeleted: deletion.verifiedAbsent,
       contentDeleteAcknowledged: deletion.acknowledged,
       contentAbsenceVerified: deletion.verifiedAbsent,
+      ...(!deletion.verifiedAbsent ? {
+        warnings: ["AFFiNE acknowledged the deletion request, but content absence could not be verified. The document may remain readable and continue syncing to clients."],
+      } : {}),
     });
   } catch (error) {
     return toolError(error, {
@@ -3325,6 +3337,10 @@ export function registerDocTools(
       resolveEdgelessLayoutHints(blocks, normalized);
       const context = resolveInsertContext(blocks, normalized);
       const { blockId, block, flavour, blockType, extraBlocks } = createBlock(normalized);
+      const databaseRows: Y.Map<any>[] = [];
+      if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
+        databaseRows.push(block);
+      }
 
       blocks.set(blockId, block);
       if (Array.isArray(extraBlocks)) {
@@ -3344,7 +3360,9 @@ export function registerDocTools(
         operations: markdown.operations,
         strict: parsed.strict,
         placement: { parentId: blockId },
-      }) : undefined;
+      }, databaseRows) : undefined;
+
+      await setNewDatabaseRowCreators(databaseRows);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushPageDocUpdate(socket, workspaceId, normalized.docId, Buffer.from(delta).toString("base64"));
@@ -3484,6 +3502,15 @@ export function registerDocTools(
           type: "bookmark",
           url: operation.url,
           caption: operation.caption,
+          strict,
+          placement,
+        };
+      case "latex":
+        return {
+          workspaceId,
+          docId,
+          type: "latex",
+          latex: operation.latex,
           strict,
           placement,
         };
@@ -3774,6 +3801,7 @@ export function registerDocTools(
         caption: asStringOrNull(block.get("prop:caption")),
         tableData: table?.tableData ?? null,
         tableCellDeltas: table?.tableCellDeltas ?? null,
+        latex: asStringOrNull(block.get("prop:latex")),
       };
       blocksById.set(blockId, entry);
 
@@ -4227,7 +4255,7 @@ export function registerDocTools(
     strict?: boolean;
     placement?: AppendPlacement;
     replaceExisting?: boolean;
-  }) {
+  }, databaseRows: Y.Map<any>[]) {
     const strict = parsed.strict !== false;
     const replaceExisting = parsed.replaceExisting === true;
     const blocks = doc.getMap("blocks") as Y.Map<any>;
@@ -4284,7 +4312,7 @@ export function registerDocTools(
       try {
         const normalized = normalizeAppendBlockInput(appendInput);
         const context = resolveInsertContext(blocks, normalized);
-        const { blockId, block, extraBlocks } = createBlock(normalized);
+        const { blockId, block, flavour, extraBlocks } = createBlock(normalized);
         blocks.set(blockId, block);
         if (Array.isArray(extraBlocks)) {
           for (const extra of extraBlocks) {
@@ -4295,6 +4323,9 @@ export function registerDocTools(
           context.children.push([blockId]);
         } else {
           context.children.insert(context.insertIndex, [blockId]);
+        }
+        if (context.parentBlock.get("sys:flavour") === "affine:database" && flavour === "affine:paragraph") {
+          databaseRows.push(block);
         }
         blockIds.push(blockId);
         lastInsertedBlockId = blockId;
@@ -4347,7 +4378,9 @@ export function registerDocTools(
 
       Y.applyUpdate(doc, Buffer.from(snapshot.missing, "base64"));
       const prevSV = Y.encodeStateVector(doc);
-      const result = applyMarkdownOperationsToDoc(doc, parsed);
+      const databaseRows: Y.Map<any>[] = [];
+      const result = applyMarkdownOperationsToDoc(doc, parsed, databaseRows);
+      await setNewDatabaseRowCreators(databaseRows);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushPageDocUpdate(socket, parsed.workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
@@ -7474,7 +7507,7 @@ export function registerDocTools(
     "create_doc_from_markdown",
     {
       title: "Create Document From Markdown",
-      description: "Create a new AFFiNE document and import Markdown as native blocks. Use parentDocId to embed the new doc into a parent, or folderId to place it in an organize folder.",
+      description: "Create a new AFFiNE document and import Markdown as native blocks, including $$...$$ equation blocks and $...$ inline equations. Use parentDocId to embed the new doc into a parent, or folderId to place it in an organize folder.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         title: z.string().optional(),
@@ -7593,7 +7626,7 @@ export function registerDocTools(
     "append_markdown",
     {
       title: "Append Markdown",
-      description: "Append markdown content to an existing AFFiNE document.",
+      description: "Append markdown content to an existing AFFiNE document. $$...$$ and $...$ become native equations.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
@@ -7743,8 +7776,9 @@ export function registerDocTools(
     try {
       await joinWorkspace(socket, workspaceId);
       const result = await deleteDocFromWorkspace(socket, workspaceId, parsed.docId);
-      const deletion = result.structuredContent as { ok?: boolean; status?: string } | undefined;
-      if (deletion?.ok === true && (deletion.status === "deleted" || deletion.status === "already_absent")) {
+      const deletion = result.structuredContent as { ok?: boolean; status?: string; metadataRemoved?: boolean } | undefined;
+      if (deletion?.metadataRemoved === true
+        || (deletion?.ok === true && (deletion.status === "deleted" || deletion.status === "already_absent"))) {
         acknowledgedDeletedDocs.remember(workspaceId, parsed.docId);
       }
       return result;
@@ -7756,7 +7790,7 @@ export function registerDocTools(
     'delete_doc',
     {
       title: 'Delete Document',
-      description: 'Delete a document, wait for the AFFiNE WebSocket outcome, and report workspace-metadata and content deletion separately. This is destructive; use revoke_doc when you only need to remove public access.',
+      description: 'Remove a document from the workspace list and request content deletion. AFFiNE servers may acknowledge this request while retaining readable content that still syncs. Content deletion is reported only after absence is verified; otherwise the result is partial with a warning. This is destructive; use trash_doc for recoverable cleanup or revoke_doc to remove public access.',
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         docId: DocId,
@@ -8598,6 +8632,19 @@ export function registerDocTools(
     return rowCells;
   }
 
+  function setDatabaseRowCreationMetadata(rowBlock: Y.Map<any>, creatorId: string): void {
+    rowBlock.set("prop:meta:createdBy", creatorId);
+    rowBlock.set("prop:meta:createdAt", Date.now());
+  }
+
+  async function setNewDatabaseRowCreators(databaseRows: Y.Map<any>[]): Promise<void> {
+    if (databaseRows.length === 0) return;
+    const creatorId = await fetchCurrentUserId(gql);
+    for (const rowBlock of databaseRows) {
+      setDatabaseRowCreationMetadata(rowBlock, creatorId);
+    }
+  }
+
   function addDatabaseRowToBlock(parsed: {
     blocks: Y.Map<any>;
     dbBlock: Y.Map<any>;
@@ -8606,6 +8653,7 @@ export function registerDocTools(
     lookup: DatabaseColumnLookup;
     cells: Record<string, unknown>;
     linkedDocId?: string;
+    creatorId: string;
   }): string {
     const rowBlockId = generateId();
     const rowBlock = new Y.Map<any>();
@@ -8613,6 +8661,7 @@ export function registerDocTools(
     rowBlock.set("sys:parent", parsed.databaseBlockId);
     rowBlock.set("sys:children", new Y.Array<string>());
     rowBlock.set("prop:type", "text");
+    setDatabaseRowCreationMetadata(rowBlock, parsed.creatorId);
     if (parsed.linkedDocId) {
       rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
     } else {
@@ -8915,38 +8964,17 @@ export function registerDocTools(
     if (!workspaceId) throw new Error("workspaceId is required");
     const ctx = await loadDatabaseDocContext(workspaceId, parsed.docId, parsed.databaseBlockId);
     try {
-      // Create a new paragraph block as the row child of the database
-      const rowBlockId = generateId();
-      const rowBlock = new Y.Map<any>();
-      setSysFields(rowBlock, rowBlockId, "affine:paragraph");
-      rowBlock.set("sys:parent", parsed.databaseBlockId);
-      rowBlock.set("sys:children", new Y.Array<string>());
-      rowBlock.set("prop:type", "text");
-      if (parsed.linkedDocId) {
-        rowBlock.set("prop:text", makeLinkedDocText(parsed.linkedDocId));
-      } else {
-        const titleValue = resolveDatabaseTitleValue(parsed.cells, ctx);
-        rowBlock.set("prop:text", makeText(titleValue));
-      }
-      ctx.blocks.set(rowBlockId, rowBlock);
-
-      // Add row block to database's children
-      const dbChildren = ensureChildrenArray(ctx.dbBlock);
-      dbChildren.push([rowBlockId]);
-
-      // Create row cell map
-      const rowCells = ensureDatabaseRowCells(ctx.cellsMap, rowBlockId);
-      for (const [key, value] of Object.entries(parsed.cells)) {
-        const col = findDatabaseColumn(key, ctx);
-        if (!col) {
-          if (isTitleAliasKey(key)) {
-            continue;
-          }
-          throw new Error(`Column '${key}' not found. Available columns: ${availableDatabaseColumns(ctx)}`);
-        }
-
-        writeDatabaseCellValue(rowCells, col, value, true);
-      }
+      const creatorId = await fetchCurrentUserId(gql);
+      const rowBlockId = addDatabaseRowToBlock({
+        blocks: ctx.blocks,
+        dbBlock: ctx.dbBlock,
+        cellsMap: ctx.cellsMap,
+        databaseBlockId: parsed.databaseBlockId,
+        lookup: ctx,
+        cells: parsed.cells,
+        linkedDocId: parsed.linkedDocId,
+        creatorId,
+      });
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);
       await pushPageDocUpdate(ctx.socket, workspaceId, parsed.docId, Buffer.from(delta).toString("base64"));
@@ -9062,20 +9090,30 @@ export function registerDocTools(
         const rowCells = ctx.cellsMap.get(rowBlockId);
         const cells: Record<string, Record<string, unknown>> = {};
 
-        if (rowCells instanceof Y.Map) {
-          for (const col of ctx.columnDefs) {
-            if (ctx.titleCol && col.id === ctx.titleCol.id) {
-              continue;
-            }
-            if (!requestedColumnIds.has(col.id)) {
-              continue;
-            }
-            const cellEntry = rowCells.get(col.id);
-            if (cellEntry === undefined) {
-              continue;
-            }
-            cells[col.name || col.id] = decodeDatabaseCellValue(col, cellEntry);
+        for (const col of ctx.columnDefs) {
+          if (ctx.titleCol && col.id === ctx.titleCol.id) {
+            continue;
           }
+          if (!requestedColumnIds.has(col.id)) {
+            continue;
+          }
+          // Native computed columns read row metadata, even when stored cells are
+          // absent or stale (for example after changing a column's type in AFFiNE).
+          if (col.type === "created-by" || col.type === "created-time") {
+            const rawValue = rowBlock.get(col.type === "created-by"
+              ? "prop:meta:createdBy"
+              : "prop:meta:createdAt");
+            const value = col.type === "created-by"
+              ? (typeof rawValue === "string" && rawValue.trim().length > 0 ? rawValue : null)
+              : (typeof rawValue === "number" && Number.isFinite(rawValue) ? rawValue : null);
+            cells[col.name || col.id] = { columnId: col.id, type: col.type, value };
+            continue;
+          }
+          const cellEntry = rowCells instanceof Y.Map ? rowCells.get(col.id) : undefined;
+          if (cellEntry === undefined) {
+            continue;
+          }
+          cells[col.name || col.id] = decodeDatabaseCellValue(col, cellEntry);
         }
 
         return {
@@ -9236,6 +9274,7 @@ export function registerDocTools(
     const preset = buildDatabaseIntentPreset(parsed.intent);
     const title = (parsed.title ?? preset.title).trim() || preset.title;
     const starterRows = Array.isArray(parsed.seedRows) ? parsed.seedRows : preset.starterRows;
+    const creatorId = starterRows.length > 0 ? await fetchCurrentUserId(gql) : undefined;
     const creation = await appendBlockInternal({
       workspaceId,
       docId: parsed.docId,
@@ -9271,15 +9310,18 @@ export function registerDocTools(
       }
 
       const rowBlockIds: string[] = [];
-      for (const rowInput of starterRows) {
-        rowBlockIds.push(addDatabaseRowToBlock({
-          blocks: ctx.blocks,
-          dbBlock: ctx.dbBlock,
-          cellsMap: ctx.cellsMap,
-          databaseBlockId: creation.blockId,
-          lookup: buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock)),
-          cells: rowInput,
-        }));
+      if (creatorId !== undefined) {
+        for (const rowInput of starterRows) {
+          rowBlockIds.push(addDatabaseRowToBlock({
+            blocks: ctx.blocks,
+            dbBlock: ctx.dbBlock,
+            cellsMap: ctx.cellsMap,
+            databaseBlockId: creation.blockId,
+            lookup: buildDatabaseColumnLookup(readColumnDefs(ctx.dbBlock)),
+            cells: rowInput,
+            creatorId,
+          }));
+        }
       }
 
       const delta = Y.encodeStateAsUpdate(ctx.doc, ctx.prevSV);

@@ -14,6 +14,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extend the authoring-profile filtering test to assert the folder tools are exposed and folder deletion stays hidden.
 - Add `test-authoring-folders.mjs` (comprehensive suite, `npm run test:authoring-folders`): a live check that the `authoring` profile can create, rename, nest, list and link folders and file docs into them, and cannot delete folders.
 
+## [3.10.2] - 2026-10-26
+
+### Fixed
+- Read native database `created-by` and `created-time` values from row metadata, including absent or stale stored cells (#426).
+
+## [3.10.1] - 2026-10-22
+
+### Fixed
+- Retry transient workspace page timestamp synchronization failures with bounded backoff and fresh-root confirmation, without replaying saved page content.
+- Verify content absence after `delete_doc` is acknowledged. AFFiNE servers that retain readable content now produce a partial receipt with a warning instead of `contentDeleted: true`.
+
+### Known Issues
+- Accumulated Yjs root delete-set payloads may cause performance or memory pressure (#416). This issue is not fixed or reproduced during this release work. Bounded metadata retries can add root read/write attempts on transient errors.
+
+## [3.10.0] - 2026-10-19
+
+### Added
+- Markdown import (`create_doc_from_markdown`, `append_markdown`, `replace_doc_with_markdown`) converts `$$...$$` to native AFFiNE equation blocks and `$...$` to inline equations, keeping TeX backslashes such as `\,` intact. Inline `$` follows Pandoc's rules, so prices such as `$5 and $10` stay text.
+- Markdown export writes equation blocks as `$$...$$` and inline equations as `$...$`, and escapes `$` in text only where it could otherwise be re-imported as math.
+
+### Fixed
+- Preserve list-item text after display math, including task items and nested lists.
+- Preserve literal dollar-sign text across code, link, and linked-page boundaries, including code that falls back to plain text in table cells.
+- Report safety-added spaces and inline-to-display block conversion as lossy. Avoid that conversion warning for inline math inside native callouts.
+- Report display equation blocks inside callouts as lossy when Markdown re-import converts them to inline math.
+- Report display equation blocks below quotes or lists as lossy when Markdown re-import changes their placement or converts them to inline math.
+
+### Changed
+- Update locked Express to 5.3.0, Playwright to 1.64.0, and development Node.js types to 24.19.2; update pinned GitHub Actions dependencies.
+
+### Tests
+- Cover math import, export, round trips, dollar-sign text, container handling, and native equation persistence in fast and live integration tests.
+
+## [3.9.1] - 2026-10-12
+
+### Fixed
+- Record the authenticated AFFiNE creator and creation time for new database rows, including composed rows and paragraph insertion, without replacing existing row metadata.
+
+### Changed
+- Update locked MCP SDK to 1.32.1 and development Node.js types to 24.19.1.
+
+### Tests
+- Verify row attribution across direct creation, composition, block insertion, and Markdown insertion, including edits by another account and native UI reloads.
+
+## [3.9.0] - 2026-10-06
+
+### Added
+- `set_doc_journal` sets, changes, or clears an existing document's native AFFiNE Journal date while preserving custom properties and creator metadata.
+
+### Fixed
+- Reject unrecognized checkbox values in `set_doc_property` instead of storing them as `false`, as number and date values already are.
+- Update transitive `proxy-addr` to 2.0.8 to address [GHSA-jqcg-44mw-7w3h](https://github.com/jshttp/proxy-addr/security/advisories/GHSA-jqcg-44mw-7w3h).
+
+### Changed
+- Update locked MCP SDK to 1.31.0, Socket.IO client to 4.8.4, Undici to 7.30.0, Yjs to 13.6.33, and development Node.js types to 24.19.0.
+
+### Tests
+- Verify native Journal assignment, date changes, and clearing in the live integration and Chrome UI suites; cover invalid dates, property preservation, idempotency, and uncertain write acknowledgements.
+
 ## [3.8.5] - 2026-10-01
 
 ### Fixed
@@ -894,6 +953,11 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 - User management
 - Access tokens
 
+[3.10.2]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.10.2
+[3.10.1]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.10.1
+[3.10.0]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.10.0
+[3.9.1]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.9.1
+[3.9.0]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.9.0
 [3.8.5]: https://github.com/DAWNCR0W/affine-mcp-server/releases/tag/v3.8.5
 [3.8.4]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.4
 [3.8.3]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v3.8.3
@@ -940,4 +1004,4 @@ Document create/edit/delete is now supported. These are synchronized to real AFF
 [1.4.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.4.0
 [1.3.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.3.0
 [1.6.0]: https://github.com/dawncr0w/affine-mcp-server/releases/tag/v1.6.0
-[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.8.5...HEAD
+[Unreleased]: https://github.com/dawncr0w/affine-mcp-server/compare/v3.10.2...HEAD

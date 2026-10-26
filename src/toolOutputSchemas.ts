@@ -150,6 +150,7 @@ const OUTPUT_SPECS = {
   revoke_member: spec({ workspaceId: "string", userId: "string", email: "nullableString", revoked: "boolean" }),
   search_doc_content: spec({ keyword: "string", workspaceId: "string", totalCount: "number", results: "unknownArray" }, true),
   search_docs: spec({ query: "string", tag: "nullableString", matchMode: "string", sortBy: "string", sortDirection: "string", limit: "number", totalCount: "number", results: "unknownArray", offset: "number", hasMore: "boolean", truncated: "boolean", nextOffset: "nullableNumber" }, true),
+  set_doc_journal: spec({ workspaceId: "string", docId: "string", date: "nullableString", updated: "boolean" }),
   set_doc_property: spec({ workspaceId: "string", docId: "string", propertyId: "string", name: "string", type: "string", value: "unknown", stored: "unknown", updated: "boolean" }),
   sign_in: spec({ signedIn: "boolean" }),
   trash_doc: fallible(receipt({ status: "string", workspaceId: "string", docId: "string", title: "nullableString", changed: "boolean", previouslyInTrash: "boolean", inTrash: "boolean", trashDate: "nullableNumber", readBackVerified: "boolean" })),

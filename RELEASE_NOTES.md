@@ -1,5 +1,120 @@
 # Release Notes
 
+## Version 3.10.2 (2026-10-26)
+
+### Highlights
+- Read the native Created by and Created time database columns correctly through `read_database_cells`.
+
+### What Changed
+- Resolve `created-by` from row `prop:meta:createdBy` and `created-time` from `prop:meta:createdAt`, including rows with absent, empty, null, or stale stored cells (#426).
+- Match AFFiNE's metadata-first computed-column behavior after a column is converted to a native type.
+- Return the creator user ID and numeric creation timestamp; missing or invalid metadata returns `null` without backfilling rows or substituting the current user.
+- Preserve ordinary cell decoding, rich-text titles, and row/column filters. Add regression coverage for renamed columns, invalid metadata, zero timestamps, and read-only behavior.
+
+### Compatibility
+- The canonical MCP surface remains at 107 tools. Existing tool names and required inputs remain unchanged.
+- Native creation columns can now appear in results even when no stored cell exists. User display names are not resolved; `created-by` returns the native user ID.
+- No configuration or data migration is required. Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.10.2`, then restart the MCP server.
+
+### Known Issues
+- [#416](https://github.com/DAWNCR0W/affine-mcp-server/issues/416): Accumulated Yjs root delete-set payloads may cause performance or memory pressure. This release does not address that issue.
+
+## Version 3.10.1 (2026-10-22)
+
+### Highlights
+- Report document deletion according to verified content absence, rather than acknowledgement alone.
+- Recover transient workspace timestamp synchronization failures without replaying saved page content.
+
+### What Changed
+- Make `delete_doc` report workspace metadata removal, deletion acknowledgement, and verified content absence separately (#417, #419). An acknowledged request that leaves readable content returns a partial receipt with a warning.
+- Retry transient workspace metadata reads and writes up to three times after 500, 1000, and 2000 ms (#418, #420). Reload the root before each attempt and accept a timestamp that is already current.
+- Preserve acknowledgement error names and codes so permanent errors stop promptly while recognized transient errors can retry.
+- Keep permanent or exhausted timestamp failures as non-retryable partial-write errors. Inspect the saved document and repair metadata instead of repeating the content edit.
+- Add regressions for retained content after deletion acknowledgement, unconfirmed content state, verification timeouts, transient metadata errors, lost acknowledgements, concurrent timestamps, and a large content payload.
+
+### Compatibility
+- The canonical MCP surface remains at 107 tools. Existing tool names and required inputs remain unchanged.
+- `delete_doc` can return `ok: true` with `status: partial`, `deleted: false`, and `contentDeleted: false`. Inspect the receipt and warnings; `contentDeleted: true` requires verified content absence.
+- Upstream AFFiNE deletion behavior is unchanged. Some servers retain readable, syncing content after acknowledging deletion. Use `trash_doc` for recoverable cleanup.
+- Timestamp retries affect only workspace metadata. Saved page content is never replayed.
+- No configuration or data migration is required. Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.10.1`, then restart the MCP server.
+
+### Known Issues
+- [#416](https://github.com/DAWNCR0W/affine-mcp-server/issues/416): Accumulated Yjs root delete-set payloads may cause performance or memory pressure. This issue is not fixed or reproduced during this release work. Bounded metadata retries can add root read/write attempts on transient errors.
+
+## Version 3.10.0 (2026-10-19)
+
+### Highlights
+- Import and export LaTeX equations as native AFFiNE math with `$...$` inline equations and `$$...$$` equation blocks.
+
+### What Changed
+- Support equations in `create_doc_from_markdown`, `append_markdown`, and `replace_doc_with_markdown`, keeping TeX backslashes intact (#412).
+- Export native equation blocks and inline equations as Markdown math. Escape literal dollar signs where needed to keep ordinary text from becoming equations on re-import.
+- Preserve list-item text after display math, including task items and nested lists. Report safety respacing and standalone inline-to-display conversion as lossy, with context-aware handling for native callouts.
+- Preserve literal dollar-sign text across code, link, and linked-page boundaries, including code that falls back to plain text.
+- Report display equation blocks inside callouts as lossy when re-import converts them to inline math.
+- Report display equation blocks below quotes or lists as lossy when re-import changes their placement or converts them to inline math.
+- Add fast parser, export, and round-trip regressions and live integration checks for native equation storage.
+- Update locked Express to 5.3.0, Playwright to 1.64.0, and development Node.js types to 24.19.2; update pinned GitHub Actions dependencies.
+
+### Compatibility
+- The canonical MCP surface remains at 107 tools. Existing tool names and required inputs remain unchanged.
+- Markdown imports now interpret matching `$...$` and `$$...$$` delimiters as math. Common prices such as `$5 and $10` remain text; write `\$` for a literal dollar sign next to math.
+- Display math inside lists or quotes becomes inline math. Export reports safety-added spaces and inline-to-display block conversion through `lossy` and warnings.
+- No configuration or data migration is required. Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.10.0`, then restart the MCP server.
+
+### Thanks
+- Thanks to @Yeh35 for contributing Markdown math support.
+
+## Version 3.9.1 (2026-10-12)
+
+### Highlights
+- Keep the original creator visible for new MCP-created database rows after another account edits them in AFFiNE.
+
+### What Changed
+- Record the authenticated AFFiNE user and creation time when adding rows through `add_database_row`, `compose_database_from_intent`, `append_block`, and `append_markdown` (#401, #404).
+- Preserve existing row attribution during edits and moves. Reject new row creation before writing if the authenticated user cannot be resolved.
+- Add live integration and Chrome coverage for cross-account editing, native Created by columns, and attribution after a reload.
+- Update locked MCP SDK to 1.32.1 and development Node.js types to 24.19.1.
+
+### Compatibility
+- The canonical MCP surface remains at 107 tools. Existing tool names, inputs, and outputs remain unchanged.
+- Creator attribution uses the authenticated AFFiNE account. Clients sharing backend credentials share that attribution.
+- Existing rows are not backfilled. No configuration or data migration is required.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.9.1`, then restart the MCP server.
+
+### Thanks
+- Thanks to @pagliarinimvp for reporting the row attribution issue.
+
+## Version 3.9.0 (2026-10-06)
+
+### Highlights
+- Set, change, and clear native AFFiNE Journal dates with `set_doc_journal`.
+- Reject invalid checkbox property values instead of silently storing `false`.
+
+### What Changed
+- Add `set_doc_journal` for existing, non-trashed documents. A calendar-valid `YYYY-MM-DD` date assigns or moves the document in AFFiNE's Journals view; `null` clears only the native Journal assignment.
+- Preserve custom properties, including properties named "Journal", creator metadata, and unrelated document records. Repeating the current date or clearing an absent assignment returns `updated: false` without writing.
+- Reject conflicting document IDs and deleted property records. Confirm uncertain write acknowledgements through fresh readback; unconfirmed writes return `doc_journal_write_failed` with recovery guidance.
+- Make `set_doc_property` reject unrecognized checkbox values. Booleans, numeric `1`/`0`, and case-insensitive, whitespace-trimmed strings `true`/`false`, `1`/`0`, and `yes`/`no` remain supported.
+- Add regression, live integration, and native UI coverage for the Journal lifecycle and write recovery.
+- Update locked MCP SDK to 1.31.0, Socket.IO client to 4.8.4, Undici to 7.30.0, Yjs to 13.6.33, and development Node.js types to 24.19.0.
+- Update the transitive `proxy-addr` dependency from 2.0.7 to 2.0.8 to address [GHSA-jqcg-44mw-7w3h](https://github.com/jshttp/proxy-addr/security/advisories/GHSA-jqcg-44mw-7w3h).
+
+### Compatibility
+- One tool was added, bringing the canonical MCP surface to 107 tools. Existing tool names and required inputs remain unchanged.
+- Invalid checkbox inputs now return an error; replace unsupported values such as `"on"` with a supported boolean representation.
+- Native Journal assignments are separate from custom date properties. No configuration or data migration is required.
+- Node.js 20.18.1 or newer remains required; release validation targets AFFiNE 0.27.4.
+- Upgrade the npm package or use `ghcr.io/dawncr0w/affine-mcp-server:3.9.0`, then restart the MCP server.
+
+### Thanks
+- Thanks to @ConnorMoss02 for contributing the checkbox validation fix.
+
 ## Version 3.8.5 (2026-10-01)
 
 ### Highlights

@@ -147,19 +147,26 @@ check.
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `create_doc` | Create a new document | `content` is stored as one plain paragraph; accepts `folderId` for immediate organize-folder placement |
-| `create_doc_from_markdown` | Create a document from Markdown content | Creates native blocks, accepts `folderId` for immediate organize-folder placement, and converts `[label](LinkedPage:<docId>)` links to native inline linked-doc references |
+| `create_doc_from_markdown` | Create a document from Markdown content | Creates native blocks, accepts `folderId` for immediate organize-folder placement, converts `[label](LinkedPage:<docId>)` links to native inline linked-doc references, and converts `$$...$$` and `$...$` math to native equations |
 | `get_or_create_journal_doc` | Find AFFiNE's existing Journal (daily-note) entry for a date, or create one | `date` is required, not defaulted server-side — the container's clock/timezone won't generally match the caller's; matches AFFiNE's own JournalService date-title convention (`YYYY-MM-DD`) |
 | `inspect_template_structure` | Inspect a template's native AFFiNE structure and native-clone support | Helps choose a clone strategy |
 | `instantiate_template_native` | Instantiate a template via native AFFiNE block cloning, with optional Markdown fallback | Higher-fidelity than Markdown-only cloning |
 | `move_doc` | Move a document in the sidebar by relinking it under another parent | Validates resources and cycles, adds the destination first, avoids duplicate links, and reports partial source-removal failures |
 | `trash_doc` | Move a document to the AFFiNE trash | Recoverable with `restore_doc`; preserves document content and is safe to retry |
 | `restore_doc` | Restore a document from the AFFiNE trash | Preserves document content and is safe to retry |
-| `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`, and metadata removal plus acknowledged or verified content deletion are reported separately |
+| `delete_doc` | Delete a document | WebSocket-backed and destructive; `confirmDocId` must exactly match `docId`. Metadata removal, request acknowledgement, and verified content absence are reported separately. Servers may retain readable, syncing content; unverified deletion returns `status: partial`, `contentDeleted: false`, and a warning |
 
 Use `create_doc_from_markdown` when the initial content contains headings, lists,
-links, quotes, tables, or code fences. `create_doc.content` does not parse Markdown;
+links, quotes, tables, code fences, or math. `create_doc.content` does not parse Markdown;
 when structured Markdown is detected, its receipt warns that the content was
 stored as one plain paragraph.
+
+Markdown import and export map LaTeX math to AFFiNE's native equations: a
+`$$...$$` block becomes an equation block and `$...$` becomes an inline
+equation. TeX backslashes such as `\,` are kept as written. Inline `$` follows
+Pandoc's rules, so text such as `$5 and $10` stays plain; write `\$` for a
+literal dollar sign next to math. Display math inside a list item or quote is
+imported as an inline equation in that block.
 
 ### Content editing
 
@@ -178,7 +185,7 @@ stored as one plain paragraph.
 | `append_markdown` | Append Markdown content to an existing document | |
 | `replace_doc_with_markdown` | Replace the main note content with Markdown | Destructive; requires `full` with the `destructive` group enabled. Applies the replacement as an all-or-nothing local batch; empty output requires `allowEmpty: true` |
 
-Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. If content is saved but the timestamp update cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
+Document creation initializes the page's workspace `updatedDate`, and successful content edits advance it after the document write is acknowledged. This keeps AFFiNE's Updated lists and sorting in sync with MCP writes. Transient metadata failures, including `Too many concurrent writings` and transport timeouts, receive up to three retries after 500, 1000, and 2000 ms. Each retry reloads the workspace root and skips the write if its timestamp is already current; saved page content is never replayed. If the timestamp still cannot be confirmed, the tool returns `workspace_page_updated_date_failed` with `retryable: false`; inspect the saved document and repair its metadata rather than repeating the content edit.
 
 New pages record the authenticated AFFiNE user's ID in the workspace's native
 `docProperties.createdBy` record, so **Created by** displays the creating account.
@@ -224,7 +231,7 @@ Inline page references use `{ "insert": " ", "attributes": { "reference": { "typ
 | `remove_tag_from_doc` | Detach a tag from a document | |
 | `delete_tag` | Delete a workspace tag and detach it from every document | Destructive; accepts a tag id or name, rejects an ambiguous name |
 
-### Custom properties
+### Document properties and journals
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
@@ -233,6 +240,15 @@ Inline page references use `{ "insert": " ", "attributes": { "reference": { "typ
 | `delete_custom_property` | Soft-delete a custom property definition by id or name | Destructive; existing values are hidden |
 | `set_doc_property` | Set a document's custom property value by property id or name | Value validated per type (`checkbox` boolean, `number`, `date` `YYYY-MM-DD`, `text`) |
 | `clear_doc_property` | Remove a custom property value from a document | |
+| `set_doc_journal` | Set or clear a document's native AFFiNE Journal date | Requires an existing, non-trashed document; accepts a calendar-valid `YYYY-MM-DD` date or `null` to clear |
+
+Use `set_doc_journal` with `workspaceId`, `docId`, and `date` to mark an existing document as a Journal entry. Changing `date` moves it to the new date in AFFiNE's Journals view; passing `null` removes only the native Journal assignment. Custom properties, including a custom property named "Journal", and creator metadata are preserved. Repeating an already applied date or clearing an absent date returns `updated: false` without writing.
+
+```json
+{"workspaceId":"<workspace-id>","docId":"<doc-id>","date":"2026-10-05"}
+```
+
+The result includes `workspaceId`, `docId`, the resulting `date` (or `null`), and `updated`. To clear the assignment, call the same tool with `"date": null`. A custom date property cannot substitute for this native Journal field.
 
 Custom properties use AFFiNE's workspace-scoped tables. To recover values written by versions before 3.8.4, call `list_doc_properties` with `includeLegacy: true`. Its separate `legacy` object contains the old definitions, decoded properties, and orphan values; the normal result remains native-only. This read never imports or modifies data, so cleared native values, deleted definitions, and creator metadata stay intact. To restore an old value in AFFiNE, use `create_custom_property` for its definition and `set_doc_property` with the returned new property ID and the recovered value. Existing native properties are not automatically overwritten.
 
@@ -240,7 +256,7 @@ Custom properties use AFFiNE's workspace-scoped tables. To recover values writte
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `export_doc_markdown` | Export document content as Markdown | Preserves supported inline rich text and safely escapes untrusted Markdown contexts, URLs, tables, code fences, and optional frontmatter |
+| `export_doc_markdown` | Export document content as Markdown | Preserves supported inline rich text and equations (as `$$...$$` and `$...$`), and safely escapes untrusted Markdown contexts, URLs, tables, code fences, and optional frontmatter |
 | `export_with_fidelity_report` | Export a document with a machine-readable fidelity report | Reports unsupported inline attributes and native block loss while using the same safe serializer |
 
 ## Database blocks
@@ -254,6 +270,13 @@ Custom properties use AFFiNE's workspace-scoped tables. To recover values writte
 | `read_database_columns` | Read schema metadata, types, options, and view mappings | Useful before edits |
 | `read_database_cells` | Read row titles and decoded cell values | Rich-text titles and cells include plain values and formatting-preserving deltas |
 | `update_database_row` | Update multiple cells on a row at once | Rich-text deltas are preserved; `createOption` defaults to `true` |
+
+New rows created by `add_database_row` and `compose_database_from_intent` record the
+authenticated AFFiNE account and creation time in native block metadata. Paragraphs
+inserted directly under a database by `append_block` or `append_markdown` do the same.
+HTTP/OAuth deployments using a shared AFFiNE account attribute rows to that backend
+account. Updating or moving an existing row preserves its creation metadata; older
+rows are not backfilled.
 
 ## Edgeless canvas and surface elements
 

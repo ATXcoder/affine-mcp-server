@@ -2,8 +2,8 @@
 
 A Model Context Protocol (MCP) server for AFFiNE. It exposes AFFiNE workspaces and documents to AI assistants over stdio (default) or HTTP (`/mcp`) and supports both AFFiNE Cloud and self-hosted deployments.
 
-[![Version](https://img.shields.io/badge/version-3.8.5-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
-[![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.30.0-green)](https://github.com/modelcontextprotocol/typescript-sdk)
+[![Version](https://img.shields.io/badge/version-3.10.2-blue)](https://github.com/dawncr0w/affine-mcp-server/releases)
+[![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.32.1-green)](https://github.com/modelcontextprotocol/typescript-sdk)
 [![CI](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/dawncr0w/affine-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
@@ -39,7 +39,9 @@ Highlights:
 - Supports stdio and HTTP transports
 - Coordinates concurrent writes per workspace through one shared MCP server; optional document revisions reject stale edits
 - Supports session-cookie and email/password authentication, plus compatible bearer tokens for older deployments
-- Exposes 106 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
+- Exposes 107 canonical MCP tools backed by AFFiNE GraphQL and WebSocket APIs
+- Reads native database `created-by` (user ID) and `created-time` (timestamp) columns from row metadata; missing or invalid metadata returns `null` without backfilling it
+- Sets and clears native AFFiNE Journal dates with `set_doc_journal`
 - Includes semantic page composition, native template instantiation, database intent composition, capability and fidelity reporting, and workspace blueprint helpers
 - Includes Docker images, health probes, and end-to-end test coverage
 
@@ -47,8 +49,10 @@ Scope boundaries:
 
 - This server can access only server-backed AFFiNE workspaces
 - Browser-local workspaces stored only in local storage are not available through AFFiNE server APIs
+- After a content write, transient workspace timestamp failures are retried up to three times with backoff. If metadata still cannot be confirmed, inspect the saved document before any repair; do not repeat the content edit. See [document mutation recovery](docs/tool-reference.md#content-editing).
 - AFFiNE 0.27+ removed the legacy personal-access-token GraphQL API; this server no longer exposes token-management tools
 - AFFiNE Cloud requires browser-session authentication for this external GraphQL integration; programmatic email/password sign-in is blocked by Cloudflare
+- `delete_doc` removes workspace page metadata and requests content deletion. Some AFFiNE servers retain content despite acknowledging the request; the tool returns a partial result with a warning unless content absence is verified. Use `trash_doc` for recoverable cleanup.
 
 > New in v3.2.1: Scripted cookie login now keeps session secrets out of process arguments, validates workspace access before saving credentials, and restores document pagination for ordinary workspace members.
 
@@ -90,7 +94,7 @@ docker run -d \
   -e AFFINE_PASSWORD=your-password \
   -e AFFINE_MCP_AUTH_MODE=bearer \
   -e AFFINE_MCP_HTTP_TOKEN=your-strong-secret \
-  ghcr.io/dawncr0w/affine-mcp-server:3.8.5
+  ghcr.io/dawncr0w/affine-mcp-server:3.10.1
 ```
 
 Then point your client at:
@@ -267,11 +271,14 @@ Domains:
 - Blob storage: upload, delete, and cleanup blobs
 
 For new document content, use `create_doc` for an optional single plain-text
-paragraph and `create_doc_from_markdown` for native headings, lists, links, and
-code blocks. Both tools accept `folderId` for immediate organize-folder placement.
+paragraph and `create_doc_from_markdown` for native headings, lists, links,
+code blocks, and `$$...$$`/`$...$` math equations. Both tools accept `folderId` for immediate organize-folder placement.
 New pages record the authenticated AFFiNE account in the app's **Created by**
 property, including semantic pages, template instances, and workspace welcome pages.
 Existing creator records are preserved; older pages are not backfilled.
+New database rows also record the authenticated AFFiNE account and creation time,
+including rows composed from intent or inserted as paragraph blocks. Editing or
+moving existing rows preserves their creation metadata; older rows are not backfilled.
 
 Use `AFFINE_TOOL_PROFILE=read_only`, `core`, or `authoring` when a deployment should expose a smaller surface than the complete `full` default. This is the recommended path for hosted, browser-connected, or least-privilege deployments because it reduces agent choice overload while keeping the full tool catalog available as an opt-in surface. You can also combine profiles with `AFFINE_DISABLED_GROUPS` such as `docs.database`, `destructive`, or `admin` for finer control.
 
