@@ -75,9 +75,9 @@ workspace or document links. For a custom route, keep the deployment base in
 | --- | --- | --- |
 | `list_collections` | List workspace collections | |
 | `get_collection` | Read a collection by id | |
-| `create_collection` | Create a collection | |
+| `create_collection` | Create a collection | Optional rules are evaluated immediately; tag rules are saved as live native AFFiNE rules |
 | `update_collection` | Rename a collection | |
-| `update_collection_rules` | Replace a collection's rules and rebuild its allow-list from workspace docs | Useful for rule-backed collections |
+| `update_collection_rules` | Replace a collection's rules | Tag-only rules are saved as live native AFFiNE rules and the allow-list keeps manual additions; other rules rebuild the allow-list once |
 | `delete_collection` | Delete a collection | Destructive |
 | `add_doc_to_collection` | Add a document to a collection allow-list | |
 | `remove_doc_from_collection` | Remove a document from a collection allow-list | |
@@ -93,6 +93,8 @@ workspace or document links. For a custom route, keep the deployment base in
 | `delete_organize_link` | Delete a doc, tag, or collection link | Experimental and destructive |
 
 Collection rules accept `title` with `contains`, `equals`, or `startsWith`; `tag` with `contains` or `equals`; and `docId` with `equals` or `in`. All values are trimmed nonblank strings, except `docId` with `in`, which requires a nonempty list of nonblank strings. Invalid combinations reject the entire request before changing membership; they are never silently dropped from a submitted rule set.
+
+Rule sets made only of `tag` filters are stored as native AFFiNE collection rules (`include-any-of` tag filters, one per rule for `match: "all"`, one combined filter for `match: "any"`), so AFFiNE keeps the collection current as docs are tagged and `rules.live` is `true`. A `contains` rule covers the tags whose names contain the value when the rule is saved. Rule sets with `title` or `docId` filters, or naming no existing tag, are evaluated once into the allow-list (`rules.live` is `false`). The submitted rules are kept under `rules.mcp` for reporting; AFFiNE ignores that key. Collections whose rules were saved by older versions in this server's own format don't work as rules in the AFFiNE app (AFFiNE matches nothing when it can't read a filter); saving their rules again with `update_collection_rules` converts them.
 
 ## Documents
 

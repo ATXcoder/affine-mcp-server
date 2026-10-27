@@ -46,6 +46,7 @@
     "test:notification-contract": "node tests/test-notification-contract.mjs",
     "test:tool-manifest": "node scripts/verify-tool-manifest.mjs",
     "test:output-schemas": "node --import tsx tests/test-output-schemas.mjs",
+    "test:collection-native-rules": "node tests/test-collection-native-rules.mjs",
     "test:markdown-linked-page": "node tests/test-markdown-linked-page.mjs",
     "test:markdown-nested-lists": "node tests/test-markdown-nested-lists.mjs",
     "test:markdown-math": "node tests/test-markdown-math.mjs",

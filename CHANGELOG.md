@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fork: collection tag rules are saved as native AFFiNE rules (`include-any-of` tag filters), so AFFiNE keeps rule-backed collections current as docs are tagged. Previously rules were stored in this server's own format, which AFFiNE can't read: it treated the collection's rules as matching nothing (including tag rules added in the AFFiNE app alongside them), so the collection only ever showed its allow-list snapshot. `rules.live` reports which collections AFFiNE evaluates natively; title and docId rules are still evaluated once.
+- Fork: `create_collection` evaluates its rules immediately instead of saving them with an empty allow-list.
 - Fork: Markdown import (`create_doc_from_markdown`, `append_markdown`, `replace_doc_with_markdown`) keeps nested lists nested. Indented items become children of their parent list block, as AFFiNE stores them, instead of being flattened into sequential items with "Nested markdown lists were flattened" and "List nesting depth was reduced" warnings. Top-level blocks after a nested list stay at the top level.
 - Fork: Markdown export indents items nested under a numbered item by 3 spaces (the CommonMark content column) instead of 2, so they re-import as nested rather than as a separate list.
 
@@ -17,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Tests
 - Extend the authoring-profile filtering test to assert the folder tools are exposed and folder deletion stays hidden.
 - Add `test-authoring-folders.mjs` (comprehensive suite, `npm run test:authoring-folders`): a live check that the `authoring` profile can create, rename, nest, list and link folders and file docs into them, and cannot delete folders.
+- Add `test-collection-native-rules.mjs` (fast suite): native tag filter translation, live vs snapshot storage, and a model of AFFiNE's rule evaluation, including how legacy-format filters made collections match nothing.
 - Add `test-markdown-nested-lists.mjs` (fast suite): parser depths, nesting placement (including a skipped parent and a paragraph after a nested list), and export/import round trips for bulleted, numbered, mixed and task lists.
 - `test-markdown-rich-text-import.mjs` (live) now checks that a nested item is stored as a child of its parent list block after create and replace.
 

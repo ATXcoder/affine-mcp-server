@@ -1,6 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as Y from "yjs";
+import {
+  nativeFiltersOf,
+  planCollectionRules,
+  type StoredCollectionRules,
+  viewNativeFilters,
+} from "./collectionRules.js";
 import { generateKeyBetween } from "fractional-indexing";
 
 import { GraphQLClient } from "../graphqlClient.js";
@@ -38,9 +44,11 @@ type CollectionRulesInput = z.infer<typeof CollectionRulesSchema>;
 type CollectionInfo = {
   id: string;
   name: string;
+  // The MCP view of the rules; `live` means AFFiNE evaluates them natively (see collectionRules.ts).
   rules: {
     match: "all" | "any";
     filters: CollectionRuleFilter[];
+    live?: boolean;
   };
   allowList: string[];
 };
@@ -51,7 +59,8 @@ type CollectionLookup = {
   collection: CollectionInfo;
 };
 
-type CollectionMutationPatch = Partial<Pick<CollectionInfo, "name" | "rules" | "allowList">>;
+// `rules` here is the stored value (native filters + MCP rules), not the view.
+type CollectionMutationPatch = { name?: string; rules?: StoredCollectionRules; allowList?: string[] };
 
 type CollectionRuleField = "title" | "tag" | "docId";
 type CollectionRuleOperator = "contains" | "equals" | "startsWith" | "in";
@@ -142,7 +151,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return candidate as Record<string, unknown>;
 }
 
-function normalizeCollection(value: unknown): CollectionInfo | null {
+function normalizeCollection(value: unknown, tagsById: Map<string, WorkspaceTagOption> = new Map()): CollectionInfo | null {
   const collection = asRecord(value);
   if (!collection) {
     return null;
@@ -153,14 +162,33 @@ function normalizeCollection(value: unknown): CollectionInfo | null {
   const allowList = Array.isArray(collection.allowList)
     ? collection.allowList.filter((entry): entry is string => typeof entry === "string")
     : [];
-  const rules = normalizeCollectionRules(collection.rules);
-
   return {
     id: collection.id,
     name: collection.name,
-    rules,
+    rules: collectionRulesView(collection.rules, tagsById),
     allowList,
   };
+}
+
+/**
+ * The MCP view of a stored `rules` value: the MCP rules kept under `rules.mcp`; else rules
+ * written in MCP format by older versions of this server (never live, and they stop AFFiNE
+ * from evaluating any rule in the collection); else native filters created in the AFFiNE app.
+ */
+function collectionRulesView(rawRules: unknown, tagsById: Map<string, WorkspaceTagOption>): CollectionInfo["rules"] {
+  const native = nativeFiltersOf(rawRules);
+  const record = asRecord(rawRules);
+  if (record?.mcp) {
+    return { ...normalizeCollectionRules(record.mcp), live: native.length > 0 };
+  }
+  const legacy = normalizeCollectionRules(rawRules);
+  if (legacy.filters.length > 0) {
+    return { ...legacy, live: false };
+  }
+  if (native.length > 0) {
+    return { ...viewNativeFilters(native, tagsById), live: true };
+  }
+  return { match: "all", filters: [], live: false };
 }
 
 function normalizeOrganizeNode(value: unknown): OrganizeNodeRecord | null {
@@ -212,10 +240,10 @@ function deleteRecord(record: Y.Map<any>, keepId = true): void {
   record.set("$$DELETED", true);
 }
 
-function readCollections(array: Y.Array<any>): CollectionInfo[] {
+function readCollections(array: Y.Array<any>, tagsById?: Map<string, WorkspaceTagOption>): CollectionInfo[] {
   const collections: CollectionInfo[] = [];
   for (let i = 0; i < array.length; i += 1) {
-    const normalized = normalizeCollection(array.get(i));
+    const normalized = normalizeCollection(array.get(i), tagsById);
     if (normalized) {
       collections.push(normalized);
     }
@@ -223,10 +251,10 @@ function readCollections(array: Y.Array<any>): CollectionInfo[] {
   return collections;
 }
 
-function findCollection(array: Y.Array<any>, id: string): CollectionLookup | null {
+function findCollection(array: Y.Array<any>, id: string, tagsById?: Map<string, WorkspaceTagOption>): CollectionLookup | null {
   for (let i = 0; i < array.length; i += 1) {
     const raw = asRecord(array.get(i));
-    const collection = normalizeCollection(raw);
+    const collection = normalizeCollection(raw, tagsById);
     if (collection?.id === id && raw) {
       return { index: i, raw, collection };
     }
@@ -692,7 +720,8 @@ export function registerOrganizeTools(
       if (!(current instanceof Y.Array)) {
         throw new Error("Workspace does not contain any collections.");
       }
-      const found = findCollection(current, collectionId);
+      const tagsById = getWorkspaceTagOptionMaps(doc.getMap("meta")).byId;
+      const found = findCollection(current, collectionId, tagsById);
       if (!found) {
         throw new Error(`Collection '${collectionId}' was not found.`);
       }
@@ -702,8 +731,8 @@ export function registerOrganizeTools(
         doc,
         collection: found.collection,
       });
-      const next: CollectionInfo = { ...found.collection, ...patch };
       const nextValue = { ...found.raw, ...patch };
+      const next = normalizeCollection(nextValue, tagsById) ?? found.collection;
 
       doc.transact(() => {
         current.delete(found.index, 1);
@@ -818,19 +847,26 @@ async function listWorkspaceDocsForCollectionRules(
     collectionId: string;
     rules: CollectionInfo["rules"];
   }) {
+    let matchedDocIds: string[] = [];
     const collection = await mutateCollectionEntry({
       workspaceId,
       collectionId,
-      update: async ({ socket, doc }) => {
+      update: async ({ socket, doc, collection: current }) => {
         const docs = await listWorkspaceDocsForCollectionRules(socket, workspaceId, doc);
-        const allowList = docs.filter(entry => matchesCollectionRules(entry, rules)).map(entry => entry.id);
-        return { rules, allowList };
+        matchedDocIds = docs.filter(entry => matchesCollectionRules(entry, rules)).map(entry => entry.id);
+        const plan = planCollectionRules({
+          rules,
+          tags: getWorkspaceTagOptions(doc.getMap("meta")),
+          matchedDocIds,
+          existingAllowList: current.allowList,
+        });
+        return { rules: plan.stored, allowList: plan.allowList };
       },
     });
     return {
       collection,
-      matchedDocIds: collection.allowList,
-      matchedCount: collection.allowList.length,
+      matchedDocIds,
+      matchedCount: matchedDocIds.length,
     };
   }
 
@@ -850,7 +886,8 @@ async function listWorkspaceDocsForCollectionRules(
       const { doc } = await loadWorkspaceRootDoc(socket, resolvedWorkspaceId);
       const setting = doc.getMap("setting");
       const current = setting.get("collections");
-      const collections = current instanceof Y.Array ? readCollections(current) : [];
+      const tagsById = getWorkspaceTagOptionMaps(doc.getMap("meta")).byId;
+      const collections = current instanceof Y.Array ? readCollections(current, tagsById) : [];
       return text([...collections].sort((left, right) => left.name.localeCompare(right.name)));
     } finally {
       socket.disconnect();
@@ -878,7 +915,7 @@ async function listWorkspaceDocsForCollectionRules(
       const setting = doc.getMap("setting");
       const current = setting.get("collections");
       const collection = current instanceof Y.Array
-        ? findCollection(current, collectionId)?.collection
+        ? findCollection(current, collectionId, getWorkspaceTagOptionMaps(doc.getMap("meta")).byId)?.collection
         : undefined;
       if (!collection) {
         throw new Error(`Collection '${collectionId}' was not found.`);
@@ -924,16 +961,25 @@ async function listWorkspaceDocsForCollectionRules(
         setting.set("collections", current);
       }
 
-      const collection: CollectionInfo = {
-        id: generateId(),
-        name,
-        rules: parsedRules ? normalizeCollectionRules(parsedRules) : { match: "all", filters: [] },
-        allowList: [],
-      };
+      const meta = doc.getMap("meta");
+      const tags = getWorkspaceTagOptions(meta);
+      let stored: { filters: unknown[]; mcp?: CollectionInfo["rules"] } = { filters: [] };
+      let allowList: string[] = [];
+      if (parsedRules && parsedRules.filters.length > 0) {
+        // Evaluate the rules now; previously they were saved with an empty allow-list
+        // and the collection stayed empty until update_collection_rules ran.
+        const rulesToStore = normalizeCollectionRules(parsedRules);
+        const docs = await listWorkspaceDocsForCollectionRules(socket, resolvedWorkspaceId, doc);
+        const matchedDocIds = docs.filter(entry => matchesCollectionRules(entry, rulesToStore)).map(entry => entry.id);
+        const plan = planCollectionRules({ rules: rulesToStore, tags, matchedDocIds, existingAllowList: [] });
+        stored = plan.stored;
+        allowList = plan.allowList;
+      }
 
-      current.push([collection]);
+      const value = { id: generateId(), name, rules: stored, allowList };
+      current.push([value]);
       await saveWorkspaceRootDoc(socket, resolvedWorkspaceId, doc);
-      return text(collection);
+      return text(normalizeCollection(value, getWorkspaceTagOptionMaps(meta).byId));
     } finally {
       socket.disconnect();
     }
@@ -943,7 +989,7 @@ async function listWorkspaceDocsForCollectionRules(
     "create_collection",
     {
       title: "Create Collection",
-      description: "Create a new AFFiNE sidebar collection with optional rules. This writes workspace sidebar metadata but does not create documents.",
+      description: "Create a new AFFiNE sidebar collection with optional rules, filled with the docs the rules match now. Tag rules are saved as native AFFiNE rules, so docs tagged later join automatically (rules.live is true); title and docId rules are evaluated once. This writes workspace sidebar metadata but does not create documents.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         name: FolderName.describe("Collection name"),
@@ -973,7 +1019,7 @@ async function listWorkspaceDocsForCollectionRules(
     return text({
       workspaceId: resolvedWorkspaceId,
       collectionId,
-      rules: normalizedRules,
+      rules: result.collection.rules,
       allowList: result.collection.allowList,
       matchedDocIds: result.matchedDocIds,
       matchedCount: result.matchedCount,
@@ -984,7 +1030,7 @@ async function listWorkspaceDocsForCollectionRules(
     "update_collection_rules",
     {
       title: "Update Collection Rules",
-      description: "Replace an AFFiNE collection's rules and rebuild its allow-list from current workspace documents. This can change which docs appear in the collection.",
+      description: "Replace an AFFiNE collection's rules. Tag rules are saved as native AFFiNE rules that stay current as docs are tagged (rules.live is true; a 'contains' rule covers the tags that exist now), and the allow-list keeps only docs added by hand. Rules with title or docId filters are evaluated once into the allow-list. This can change which docs appear in the collection.",
       inputSchema: {
         workspaceId: WorkspaceId.optional(),
         collectionId: CollectionId,
